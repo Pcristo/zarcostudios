@@ -1,0 +1,363 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A portfolio project",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "titlePt": { "type": "string" },
+        "category": { 
+          "type": "string",
+          "enum": ["Work", "College"]
+        },
+        "institution": {
+          "type": "string",
+          "enum": ["Code Institute", "Harvard University", "none"]
+        },
+        "year": { "type": "string" },
+        "image": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "shortDescriptionPt": { "type": "string" },
+        "fullDescription": { "type": "string" },
+        "fullDescriptionPt": { "type": "string" },
+        "goals": { "type": "string" },
+        "liveUrl": { "type": "string" },
+        "repoUrl": { "type": "string" },
+        "techStack": { "type": "array", "items": { "type": "string" } },
+        "gallery": { "type": "array", "items": { "type": "string" } },
+        "isFeatured": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "year", "image", "isActive"]
+    },
+    "PricingPlan": {
+      "title": "Pricing Plan",
+      "description": "A pricing plan for services",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "namePt": { "type": "string" },
+        "price": { "type": "number" },
+        "priceSuffixEn": { "type": "string" },
+        "priceSuffixPt": { "type": "string" },
+        "descriptionEn": { "type": "string" },
+        "descriptionPt": { "type": "string" },
+        "buttonTextEn": { "type": "string" },
+        "buttonTextPt": { "type": "string" },
+        "servicesEn": { "type": "array", "items": { "type": "string" } },
+        "servicesPt": { "type": "array", "items": { "type": "string" } },
+        "show": { "type": "boolean" },
+        "isHighlighted": { "type": "boolean" },
+        "discountPercentage": { "type": "number" },
+        "periodicity": { 
+          "type": "string",
+          "enum": ["Hourly", "Monthly", "Yearly", "One Time", "2 Years", "One Time Purchase"]
+        },
+        "order": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nameEn", "price", "show", "isHighlighted"]
+    },
+    "PricingSettings": {
+      "title": "Pricing Settings",
+      "description": "Global settings for the pricing page",
+      "type": "object",
+      "properties": {
+        "showSection": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["showSection"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "A client profile",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "companyName": { "type": "string" },
+        "businessType": { "type": "string" },
+        "industry": { "type": "string" },
+        "description": { "type": "string" },
+        "websiteUrl": { "type": "string", "format": "uri" },
+        "instagramUrl": { "type": "string", "format": "uri" },
+        "facebookUrl": { "type": "string", "format": "uri" },
+        "linkedinUrl": { "type": "string", "format": "uri" },
+        "tiktokUrl": { "type": "string", "format": "uri" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "otherContact": { "type": "string" },
+        "streetAddress": { "type": "string" },
+        "addressLine2": { "type": "string" },
+        "city": { "type": "string" },
+        "zipCode": { "type": "string" },
+        "country": { "type": "string" },
+        "vatNumber": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fullName", "companyName", "email"]
+    },
+    "ClientProject": {
+      "title": "Client Project",
+      "description": "Internal management project linked to a client",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "projectName": { "type": "string" },
+        "projectType": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "fullDescription": { "type": "string" },
+        "techStack": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["Lead", "Planning", "Design", "Development", "Testing", "Completed", "Maintenance"] },
+        "liveUrl": { "type": "string" },
+        "providerUrl": { "type": "string" },
+        "otherUrls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "githubUrl": { "type": "string" },
+        "figmaUrl": { "type": "string" },
+        "serviceEmail": { "type": "string", "format": "email" },
+        "domainName": { "type": "string" },
+        "domainProvider": { "type": "string" },
+        "domainExpiration": { "type": "string" },
+        "mainImage": { "type": "string" },
+        "gallery": { "type": "array", "items": { "type": "string" } },
+        "demoVideoUrl": { "type": "string" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domainName": { "type": "string" },
+              "providerUrl": { "type": "string" },
+              "domainProvider": { "type": "string" },
+              "domainExpiration": { "type": "string" },
+              "hostingType": { "type": "string", "enum": ["Frontend", "Backend", "Database", "Fullstack", "Other"] },
+              "isHostingFree": { "type": "boolean" }
+            }
+          }
+        },
+        "hostingType": { "type": "string", "enum": ["Frontend", "Backend", "Database", "Fullstack", "Other"] },
+        "isHostingFree": { "type": "boolean" },
+        "startDate": { "type": "string" },
+        "deadline": { "type": "string" },
+        "deliveryDate": { "type": "string" },
+        "price": { "type": "number" },
+        "paidStatus": { "type": "string", "enum": ["Paid", "Pending", "Deposit"] },
+        "maintenancePlan": { "type": "boolean" },
+        "internalNotes": { "type": "string" },
+        "clientFeedback": { "type": "string" },
+        "issues": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "projectName", "status"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "An administrative user",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["super", "manager"] }
+      },
+      "required": ["email", "role"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "An invoice for a client project",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "vatAmount": { "type": "number" },
+        "discountRate": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["Draft", "Sent", "Paid", "Overdue", "Cancelled"] },
+        "issueDate": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "paidDate": { "type": "string" },
+        "description": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string" },
+              "details": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unitPrice": { "type": "number" },
+              "total": { "type": "number" }
+            }
+          }
+        },
+        "applyVat": { "type": "boolean" },
+        "applyDiscount": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "invoiceNumber", "amount", "status", "issueDate"]
+    },
+    "CompanySettings": {
+      "title": "Company Settings",
+      "description": "Legal information about the agency",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "freelancerName": { "type": "string" },
+        "croNumber": { "type": "string" },
+        "businessType": { "type": "string" },
+        "addressLine1": { "type": "string" },
+        "addressLine2": { "type": "string" },
+        "zipCode": { "type": "string" },
+        "email": { "type": "string" },
+        "vatNumber": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "bankTransferDetails": { "type": "string" },
+        "showBankDetails": { "type": "boolean" },
+        "revolutDetails": { "type": "string" },
+        "revolutLink": { "type": "string" },
+        "revolutQrCodeUrl": { "type": "string" },
+        "showRevolutDetails": { "type": "boolean" },
+        "customPayments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "details": { "type": "string" },
+              "link": { "type": "string" },
+              "qrCodeUrl": { "type": "string" },
+              "show": { "type": "boolean" }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyName"]
+    },
+    "Subscriber": {
+      "title": "Subscriber",
+      "description": "A newsletter subscriber",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "subscribedAt": { "type": "string", "format": "date-time" },
+        "lang": { "type": "string", "enum": ["en", "pt"] }
+      },
+      "required": ["email", "subscribedAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A client testimonial or review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "companyName": { "type": "string" },
+        "avatar": { "type": "string" },
+        "reviewTextEn": { "type": "string" },
+        "reviewTextPt": { "type": "string" },
+        "lang": { "type": "string", "enum": ["en", "pt", "both"] },
+        "show": { "type": "boolean" },
+        "order": { "type": "number" },
+        "rating": { "type": "number" },
+        "linkedInUsername": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "reviewTextEn", "show", "rating"]
+    },
+    "TestimonialsSettings": {
+      "title": "Testimonials Settings",
+      "description": "Global settings for the testimonials section",
+      "type": "object",
+      "properties": {
+        "showSection": { "type": "boolean" },
+        "displayMode": { "type": "string", "enum": ["grid", "carousel"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["showSection", "displayMode"]
+    },
+    "NewsletterSettings": {
+      "title": "Newsletter Settings",
+      "description": "Global settings for the newsletter section",
+      "type": "object",
+      "properties": {
+        "showSection": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["showSection"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Collection of authorized administrative users"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Collection of portfolio projects"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of client reviews"
+    },
+    "/settings/testimonials": {
+      "schema": "TestimonialsSettings",
+      "description": "Visibility settings for the testimonials section"
+    },
+    "/pricing/{planId}": {
+      "schema": "PricingPlan",
+      "description": "Pricing plans for services"
+    },
+    "/settings/pricing": {
+      "schema": "PricingSettings",
+      "description": "Visibility settings for the pricing section"
+    },
+    "/settings/newsletter": {
+      "schema": "NewsletterSettings",
+      "description": "Visibility settings for the newsletter section"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Collection of client profiles"
+    },
+    "/clientProjects/{projectId}": {
+      "schema": "ClientProject",
+      "description": "Internal CRM projects linked to clients"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Collection of invoices for client projects"
+    },
+    "/settings/company-legal": {
+      "schema": "CompanySettings",
+      "description": "Singleton for agency legal information"
+    },
+    "/subscribers/{subscriberId}": {
+      "schema": "Subscriber",
+      "description": "English newsletter subscribers"
+    },
+    "/pt_subscribers/{subscriberId}": {
+      "schema": "Subscriber",
+      "description": "Portuguese newsletter subscribers"
+    }
+  }
+}

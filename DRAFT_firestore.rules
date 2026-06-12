@@ -1,0 +1,202 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == 'pcristo35@gmail.com' || request.auth.token.email == 'dev@zarco.studio');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'pcristo35@gmail.com' ||
+        request.auth.token.email == 'dev@zarco.studio' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidClientProject(data) {
+      return data.clientId is string && isValidId(data.clientId) &&
+             data.projectName is string && data.projectName.size() <= 200 &&
+             data.status in ['Lead', 'Planning', 'Design', 'Development', 'Testing', 'Completed', 'Maintenance'] &&
+             (data.get('projectType', '') is string) &&
+             (data.get('shortDescription', '') is string) &&
+             (data.get('techStack', []) is list) &&
+             (data.get('updatedAt', request.time) is timestamp);
+    }
+
+    function isValidReview(data) {
+      return data.name is string && data.name.size() <= 200 &&
+             (data.get('companyName', '') is string && data.get('companyName', '').size() <= 200) &&
+             (data.get('avatar', '') is string && data.get('avatar', '').size() <= 2000) &&
+             (data.get('reviewTextEn', '') is string && data.get('reviewTextEn', '').size() <= 5000) &&
+             (data.get('reviewTextPt', '') is string && data.get('reviewTextPt', '').size() <= 5000) &&
+             (data.get('lang', 'both') in ['en', 'pt', 'both']) &&
+             (data.get('show', true) is bool) &&
+             (data.get('order', 0) is number) &&
+             (data.get('rating', 5) is number && data.get('rating', 5) >= 1 && data.get('rating', 5) <= 5) &&
+             (data.get('linkedInUsername', '') is string && data.get('linkedInUsername', '').size() <= 100) &&
+             (data.get('updatedAt', request.time) is timestamp);
+    }
+
+    function isValidSettings(data) {
+      return (data.get('showSection', true) is bool) && (data.get('updatedAt', request.time) is timestamp);
+    }
+
+    // Admins collection rules
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if false; 
+    }
+
+    // Clients collection rules
+    match /clients/{clientId} {
+      function isValidClient(data) {
+        return data.fullName is string && data.fullName.size() <= 200 &&
+               data.companyName is string && data.companyName.size() <= 200 &&
+               data.email is string && data.email.size() <= 200 &&
+               (data.get('businessType', '') is string) &&
+               (data.get('industry', '') is string) &&
+               (data.get('description', '') is string) &&
+               (data.get('createdAt', request.time) is timestamp) &&
+               (data.get('updatedAt', request.time) is timestamp);
+      }
+
+      allow read: if true;
+      allow create: if isVerified() && isValidClient(incoming());
+      allow update: if isVerified() && isValidClient(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    match /clientProjects/{projectId} {
+      allow read: if isSignedIn();
+      allow create: if isVerified() && isValidClientProject(incoming());
+      allow update: if isVerified() && isValidClientProject(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Projects collection rules
+    match /projects/{projectId} {
+      function isValidProject(data) {
+        return data.title is string && data.title.size() <= 200
+          && (data.get('titlePt', '') is string && data.get('titlePt', '').size() <= 200)
+          && data.category is string && data.category.size() <= 100
+          && (data.get('institution', 'none') is string && data.get('institution', 'none').size() <= 100)
+          && data.year is string && data.year.size() <= 10
+          && data.image is string && data.image.size() <= 2000
+          && (data.get('shortDescription', '') is string && data.get('shortDescription', '').size() <= 1000)
+          && (data.get('shortDescriptionPt', '') is string && data.get('shortDescriptionPt', '').size() <= 1000)
+          && (data.get('fullDescription', '') is string && data.get('fullDescription', '').size() <= 5000)
+          && (data.get('fullDescriptionPt', '') is string && data.get('fullDescriptionPt', '').size() <= 5000)
+          && (data.get('goals', '') is string && data.get('goals', '').size() <= 2000)
+          && (data.get('liveUrl', '') is string && data.get('liveUrl', '').size() <= 2000)
+          && (data.get('repoUrl', '') is string && data.get('repoUrl', '').size() <= 2000)
+          && (data.get('techStack', []) is list && data.get('techStack', []).size() <= 30)
+          && (data.get('gallery', []) is list && data.get('gallery', []).size() <= 20)
+          && (data.get('isFeatured', false) is bool)
+          && (data.get('isActive', true) is bool)
+          && (data.get('createdAt', request.time) is timestamp)
+          && (data.get('updatedAt', request.time) is timestamp);
+      }
+
+      allow read: if true;
+      allow create: if isVerified() && isValidProject(incoming());
+      allow update: if isVerified() && isValidProject(incoming()) && (incoming().updatedAt == request.time || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Pricing collection rules
+    match /pricing/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidReview(incoming());
+      allow update: if isAdmin() && isValidReview(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Settings collection rules
+    match /settings/pricing {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/testimonials {
+      allow read: if true;
+      allow write: if isAdmin() && (incoming().get('showSection', true) is bool) && (incoming().get('displayMode', 'grid') in ['grid', 'carousel']) && (incoming().get('updatedAt', request.time) is timestamp);
+    }
+
+    match /settings/company-legal {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Invoices collection rules
+    match /invoices/{invoiceId} {
+      function isValidInvoice(data) {
+        return data.clientId is string && isValidId(data.clientId) &&
+               data.invoiceNumber is string && data.invoiceNumber.size() <= 100 &&
+               data.amount is number &&
+               data.status in ["Draft", "Sent", "Paid", "Overdue", "Cancelled"] &&
+               data.issueDate is string &&
+               (data.get('updatedAt', request.time) is timestamp);
+      }
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidInvoice(incoming());
+      allow update: if (isAdmin() || isVerified()) && isValidInvoice(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Subscribers rules
+    function isValidSubscriber(data) {
+      return data.email is string && data.email.size() <= 200 &&
+             data.email.matches('^[^@]+@[^@]+\\.[^@]+$') &&
+             (data.get('subscribedAt', request.time) is timestamp) &&
+             (data.get('lang', 'en') in ['en', 'pt']) &&
+             (data.get('active', true) is bool);
+    }
+
+    match /subscribers/{email} {
+      allow read: if true;
+      allow delete: if isAdmin();
+      allow create: if isValidSubscriber(incoming()) && incoming().email == email;
+      allow update: if isAdmin() || (incoming().active == false && incoming().email == email);
+    }
+
+    match /pt_subscribers/{email} {
+      allow read: if true;
+      allow delete: if isAdmin();
+      allow create: if isValidSubscriber(incoming()) && incoming().email == email;
+      allow update: if isAdmin() || (incoming().active == false && incoming().email == email);
+    }
+
+    match /newsletters/{newsletterId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
