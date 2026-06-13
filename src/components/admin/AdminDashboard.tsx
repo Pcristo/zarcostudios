@@ -1188,7 +1188,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         ...companySettings,
         updatedAt: serverTimestamp(),
       }, { merge: true });
-      alert("Settings saved successfully!");
+      showAdminToast("Settings saved successfully!", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, "settings/company-legal");
     } finally {
@@ -1488,6 +1488,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showMaintenance: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setCompanySettings(prev => ({ ...prev, showMaintenance: !currentStatus }));
+      showAdminToast(`Maintenance mode ${!currentStatus ? "activated" : "deactivated"} successfully!`, "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
     }
