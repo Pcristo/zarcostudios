@@ -410,6 +410,8 @@ interface CompanySettings {
   whatsappNumber?: string;
   whatsappNumberPT?: string;
   showWhatsappButton?: boolean;
+  showTrustWidget?: boolean;
+  trustWidgetCode?: string;
   customPayments?: {
     id: string;
     name: string;
@@ -734,6 +736,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     whatsappNumber: "",
     whatsappNumberPT: "",
     showWhatsappButton: false,
+    showTrustWidget: false,
+    trustWidgetCode: "",
     customPayments: [],
     invoicePrefix: "INV",
     nextInvoiceNumber: 1,
@@ -1460,6 +1464,17 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showWhatsappButton: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setCompanySettings(prev => ({ ...prev, showWhatsappButton: !currentStatus }));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
+    }
+  }
+
+  async function toggleTrustWidget(currentStatus: boolean) {
+    try {
+      const docRef = doc(db, "settings", "company-legal");
+      const newData = { showTrustWidget: !currentStatus, updatedAt: serverTimestamp() };
+      await setDoc(docRef, newData, { merge: true });
+      setCompanySettings(prev => ({ ...prev, showTrustWidget: !currentStatus }));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
     }
@@ -5008,6 +5023,49 @@ SWIFT: ABCDEFGH"
                     </button>
                   </div>
                 </div>
+
+                {/* Trust Integrations */}
+                <div className="space-y-6 pt-10 border-t border-white/5">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-xl">⭐</span>
+                    <h3 className="text-xl font-bold uppercase tracking-tight text-white">Trust Integrations</h3>
+                  </div>
+
+                  <Card className="bg-[#0c1417] border-white/10 p-8 rounded-3xl space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center">
+                          <span className="text-lg">📈</span>
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-white uppercase tracking-widest block">Trust Widget Script / HTML Code</label>
+                          <p className="text-[9px] text-white/30 uppercase font-medium mt-0.5">Embed Google, Trustpilot, or custom rating HTML/script code</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">Show on Home Page</span>
+                        <input 
+                          type="checkbox"
+                          checked={companySettings.showTrustWidget}
+                          onChange={(e) => setCompanySettings({...companySettings, showTrustWidget: e.target.checked})}
+                          className="w-4 h-4 rounded border-white/10 bg-black/20 accent-zarco-cyan cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <textarea
+                        value={companySettings.trustWidgetCode}
+                        onChange={(e) => setCompanySettings({...companySettings, trustWidgetCode: e.target.value})}
+                        placeholder={`e.g. <div class="trustpilot-widget" data-locale="en-GB" data-template-id="...">...</div>`}
+                        className="w-full bg-black/25 border border-white/10 rounded-2xl p-6 h-40 focus:outline-none focus:border-zarco-cyan text-xs text-white/70 font-mono leading-relaxed"
+                      />
+                      <p className="text-[10px] text-white/40 leading-relaxed">
+                        Copy and paste the raw HTML or embed script code provided by Trustpilot, Google Reviews, or any other platform here. It will render cleanly right after the Hero section on your landing page.
+                      </p>
+                    </div>
+                  </Card>
+                </div>
               </form>
             </Card>
 
@@ -5030,8 +5088,8 @@ SWIFT: ABCDEFGH"
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  <div className="flex flex-col gap-6 p-8 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
                     <div className="flex-1">
                       <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">Pricing</h4>
                       <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Control visibility of investment plans</p>
@@ -5048,7 +5106,7 @@ SWIFT: ABCDEFGH"
                     </Button>
                   </div>
 
-                  <div className="flex flex-col gap-6 p-8 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
                     <div className="flex-1">
                       <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">Newsletter</h4>
                       <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Toggle subscriber active features</p>
@@ -5065,7 +5123,7 @@ SWIFT: ABCDEFGH"
                     </Button>
                   </div>
 
-                  <div className="flex flex-col gap-6 p-8 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
                     <div className="flex-1">
                       <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">Reviews</h4>
                       <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Manage client review visibility</p>
@@ -5082,7 +5140,7 @@ SWIFT: ABCDEFGH"
                     </Button>
                   </div>
 
-                  <div className="flex flex-col gap-6 p-8 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
                     <div className="flex-1">
                       <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">WhatsApp</h4>
                       <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Toggle live support widget</p>
@@ -5096,6 +5154,23 @@ SWIFT: ABCDEFGH"
                       }`}
                     >
                       {companySettings.showWhatsappButton ? "Visible" : "Hidden"}
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                    <div className="flex-1">
+                      <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">Trust Widget</h4>
+                      <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Toggle trust badges section</p>
+                    </div>
+                    <Button
+                      onClick={() => toggleTrustWidget(companySettings.showTrustWidget || false)}
+                      className={`w-full h-12 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all ${
+                        companySettings.showTrustWidget 
+                          ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
+                          : "bg-red-500/10 text-red-500 border border-red-500/20"
+                      }`}
+                    >
+                      {companySettings.showTrustWidget ? "Visible" : "Hidden"}
                     </Button>
                   </div>
                 </div>

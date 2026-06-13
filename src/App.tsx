@@ -5,6 +5,7 @@
 
 import { Navbar } from './components/layout/Navbar';
 import { Hero } from './components/sections/Hero';
+import { TrustWidget } from './components/sections/TrustWidget';
 import { Services } from './components/sections/Services';
 import { WhatWeDo } from './components/sections/WhatWeDo';
 import { Portfolio } from './components/sections/Portfolio';
@@ -150,6 +151,7 @@ export default function App() {
           ) : (
             <>
               <Hero />
+              <TrustWidget />
               <Services />
               <WhatWeDo />
               <div id="pricing-section">

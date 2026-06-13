@@ -65,9 +65,11 @@ export function Hero() {
                 {t('hero.cta')}
               </Button>
             </a>
-            <Button variant="outline" className="px-10 py-7 bg-white/5 border-white/10 text-white font-bold rounded-full hover:bg-white/10 transition-all text-sm uppercase tracking-widest">
-              {t('hero.secondary')}
-            </Button>
+            <a href="#work">
+              <Button variant="outline" className="px-10 py-7 bg-white/5 border-white/10 text-white font-bold rounded-full hover:bg-white/10 transition-all text-sm uppercase tracking-widest">
+                {t('hero.secondary')}
+              </Button>
+            </a>
           </motion.div>
         </div>
       </div>

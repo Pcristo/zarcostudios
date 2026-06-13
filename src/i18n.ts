@@ -32,7 +32,7 @@ i18n
             title2: 'Grow Your Business',
             subtitle: 'Digital craftsmanship for high-value brands. We merge cinematic minimalism with robust engineering to elevate your digital presence.',
             cta: 'Start a Project',
-            secondary: 'View Showreel',
+            secondary: 'View Portfolio',
           },
           services: {
             title: 'Core Expertise',
@@ -215,7 +215,7 @@ i18n
             title2: 'Aumentam o seu Negócio',
             subtitle: 'Artesanato digital para marcas de alto valor. Fundimos minimalismo cinematográfico com engenharia robusta para elevar a sua presença digital.',
             cta: 'Iniciar um Projeto',
-            secondary: 'Ver Showreel',
+            secondary: 'Ver Portfólio',
           },
           services: {
             title: 'Especialização Principal',
