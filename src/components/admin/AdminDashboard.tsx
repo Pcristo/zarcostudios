@@ -412,6 +412,7 @@ interface CompanySettings {
   showWhatsappButton?: boolean;
   showTrustWidget?: boolean;
   trustWidgetCode?: string;
+  showMaintenance?: boolean;
   customPayments?: {
     id: string;
     name: string;
@@ -738,6 +739,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     showWhatsappButton: false,
     showTrustWidget: false,
     trustWidgetCode: "",
+    showMaintenance: false,
     customPayments: [],
     invoicePrefix: "INV",
     nextInvoiceNumber: 1,
@@ -1475,6 +1477,17 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showTrustWidget: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setCompanySettings(prev => ({ ...prev, showTrustWidget: !currentStatus }));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
+    }
+  }
+
+  async function toggleMaintenance(currentStatus: boolean) {
+    try {
+      const docRef = doc(db, "settings", "company-legal");
+      const newData = { showMaintenance: !currentStatus, updatedAt: serverTimestamp() };
+      await setDoc(docRef, newData, { merge: true });
+      setCompanySettings(prev => ({ ...prev, showMaintenance: !currentStatus }));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
     }
@@ -5171,6 +5184,23 @@ SWIFT: ABCDEFGH"
                       }`}
                     >
                       {companySettings.showTrustWidget ? "Visible" : "Hidden"}
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-col gap-4 p-5 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-white/10 transition-all group">
+                    <div className="flex-1">
+                      <h4 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-3">Maintenance</h4>
+                      <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider leading-relaxed">Toggle maintenance landing page</p>
+                    </div>
+                    <Button
+                      onClick={() => toggleMaintenance(companySettings.showMaintenance || false)}
+                      className={`w-full h-12 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all ${
+                        companySettings.showMaintenance 
+                          ? "bg-yellow-500 text-black shadow-lg shadow-yellow-500/20 font-black" 
+                          : "bg-green-500/10 text-green-500 border border-green-500/20"
+                      }`}
+                    >
+                      {companySettings.showMaintenance ? "Maintenance ON" : "Normal Mode"}
                     </Button>
                   </div>
                 </div>

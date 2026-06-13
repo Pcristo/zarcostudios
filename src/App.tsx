@@ -23,17 +23,19 @@ import { ProjectDetails as ProjectDetailsPage } from './components/pages/Project
 import { ProjectHub } from './components/pages/ProjectHub';
 import { Footer } from './components/layout/Footer';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { Maintenance as MaintenancePage } from './components/pages/Maintenance';
 import { BackToTop } from './components/ui/BackToTop';
 import { Preloader } from './components/ui/Preloader';
 import { CookieConsent } from './components/ui/CookieConsent';
 import { WhatsAppButton } from './components/ui/WhatsAppButton';
 import { motion, useScroll, useSpring } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { doc, getDocFromServer } from 'firebase/firestore';
+import { doc, getDocFromServer, onSnapshot } from 'firebase/firestore';
 import { db } from './lib/firebase';
 
 export default function App() {
   const [currentHash, setCurrentHash] = useState(window.location.hash);
+  const [showMaintenance, setShowMaintenance] = useState(false);
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, {
     stiffness: 100,
@@ -53,12 +55,22 @@ export default function App() {
     }
     testConnection();
 
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'company-legal'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setShowMaintenance(!!data.showMaintenance);
+      }
+    });
+
     const handleHashChange = () => {
       setCurrentHash(window.location.hash);
       window.scrollTo(0, 0);
     };
     window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      unsubSettings();
+    };
   }, []);
 
   const isAdmin = currentHash === '#admin';
@@ -84,6 +96,10 @@ export default function App() {
   try {
     if (isAdmin) {
       return <AdminDashboard onLogout={() => { window.location.hash = ''; }} />;
+    }
+
+    if (showMaintenance && !isLogin) {
+      return <MaintenancePage />;
     }
 
     if (isProjectHub && hubProjectId) {
