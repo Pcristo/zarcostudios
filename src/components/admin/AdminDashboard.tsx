@@ -71,6 +71,8 @@ import {
   Menu,
   ChevronLeft,
   ChevronRight,
+  Search,
+  CreditCard,
 } from "lucide-react";
 
 import { jsPDF } from "jspdf";
@@ -342,6 +344,18 @@ interface ClientProject {
   vatPercent?: string | number;
   applyVat?: boolean;
   customServices?: { id: string; item: string; description?: string; cost: number; isOptional?: boolean; quantity?: number; hours?: number; unitPrice?: number }[];
+  hasSubscription?: boolean;
+  subscriptionTitle?: string;
+  subscriptionDescription?: string;
+  subscriptionInterval?: "monthly" | "yearly";
+  subscriptionPrice?: string | number;
+  subscriptionEnabled?: boolean;
+  subscriptionPaid?: boolean;
+  subscriptionPaidAt?: string;
+  subFeaturesSlack?: boolean;
+  subFeaturesSecurity?: boolean;
+  subFeaturesHosting?: boolean;
+  subscriptionFeatures?: string[];
   secondaryBudgetLines?: { item: string; description?: string; cost: number | string; isOptional?: boolean }[];
   secondaryCustomServices?: { id: string; item: string; description?: string; cost: number; isOptional?: boolean; quantity?: number; hours?: number; unitPrice?: number }[];
   secondaryDiscountPercent?: string | number;
@@ -472,6 +486,7 @@ type AdminView =
   | "billing-view"
   | "billing-summary"
   | "subscribers"
+  | "subscriptions-view"
   | "reviews-list"
   | "reviews-form"
   | "settings"
@@ -479,6 +494,8 @@ type AdminView =
 
 export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("list");
+  const [subSearchQuery, setSubSearchQuery] = useState("");
+  const [subFilterStatus, setSubFilterStatus] = useState<"all" | "active" | "pending">("all");
   
   interface AdminToast {
     id: string;
@@ -534,6 +551,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [clientProjects, setClientProjects] = useState<ClientProject[]>([]);
   const [editingClientProject, setEditingClientProject] =
     useState<ClientProject | null>(null);
+  const [showAdminUnsubscribeModal, setShowAdminUnsubscribeModal] = useState<boolean>(false);
+  const [newSubscriptionFeature, setNewSubscriptionFeature] = useState<string>("");
   const [isDetailedScopeOpen, setIsDetailedScopeOpen] = useState(true);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [seenFeedbackIds, setSeenFeedbackIds] = useState<string[]>(() => {
@@ -708,6 +727,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [newsletterTab, setNewsletterTab] = useState<"audience" | "archives">("audience");
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [savingInvoice, setSavingInvoice] = useState(false);
+  const [adminProjectSearch, setAdminProjectSearch] = useState("");
+  const [adminBillingSearch, setAdminBillingSearch] = useState("");
+  const [adminClientProjectSearch, setAdminClientProjectSearch] = useState("");
 
   // Trash Bin / Recycle Bin State
   const [trashItems, setTrashItems] = useState<any[]>([]);
@@ -1822,6 +1844,15 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       vatPercent: "23",
       applyVat: true,
       customServices: [],
+      hasSubscription: false,
+      subscriptionTitle: "",
+      subscriptionDescription: "",
+      subscriptionInterval: "monthly",
+      subscriptionPrice: "",
+      subscriptionEnabled: false,
+      subFeaturesSlack: true,
+      subFeaturesSecurity: true,
+      subFeaturesHosting: true,
       secondaryBudgetLines: [],
       secondaryCustomServices: [],
       secondaryDiscountPercent: "0",
@@ -1891,6 +1922,15 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       vatPercent: "23",
       applyVat: true,
       customServices: [],
+      hasSubscription: false,
+      subscriptionTitle: "",
+      subscriptionDescription: "",
+      subscriptionInterval: "monthly",
+      subscriptionPrice: "",
+      subscriptionEnabled: false,
+      subFeaturesSlack: true,
+      subFeaturesSecurity: true,
+      subFeaturesHosting: true,
       secondaryBudgetLines: [],
       secondaryCustomServices: [],
       secondaryDiscountPercent: "0",
@@ -3150,6 +3190,57 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const newFeedbackCount = unreadFeedbacks.length;
   const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0;
 
+  const filteredProjects = projects.filter((project) => {
+    if (!adminProjectSearch.trim()) return true;
+    const queryStr = adminProjectSearch.toLowerCase().trim();
+    return (
+      (project.title || "").toLowerCase().includes(queryStr) ||
+      (project.titlePt || "").toLowerCase().includes(queryStr) ||
+      (project.year || "").toLowerCase().includes(queryStr) ||
+      (project.institution || "").toLowerCase().includes(queryStr) ||
+      (project.category || "").toLowerCase().includes(queryStr) ||
+      (project.techStack || []).some(tech => tech.toLowerCase().includes(queryStr))
+    );
+  });
+
+  const filteredInvoices = invoices.filter((invoice) => {
+    if (!adminBillingSearch.trim()) return true;
+    const queryStr = adminBillingSearch.toLowerCase().trim();
+    const client = clients.find((c) => c.id === invoice.clientId);
+    const companyName = client?.companyName || "";
+    const clientName = client?.fullName || "";
+    const project = clientProjects.find((p) => p.id === invoice.projectId);
+    const projectName = project?.projectName || "";
+    const year = invoice.issueDate ? invoice.issueDate.split("-")[0] : "";
+    return (
+      (invoice.invoiceNumber || "").toLowerCase().includes(queryStr) ||
+      companyName.toLowerCase().includes(queryStr) ||
+      clientName.toLowerCase().includes(queryStr) ||
+      projectName.toLowerCase().includes(queryStr) ||
+      year.toLowerCase().includes(queryStr) ||
+      (invoice.description || "").toLowerCase().includes(queryStr) ||
+      (invoice.issueDate || "").toLowerCase().includes(queryStr)
+    );
+  });
+
+  const filteredClientProjects = clientProjects.filter((proj) => {
+    if (!adminClientProjectSearch.trim()) return true;
+    const queryStr = adminClientProjectSearch.toLowerCase().trim();
+    const client = clients.find((c) => c.id === proj.clientId);
+    const clientName = client?.fullName || "";
+    const companyName = client?.companyName || "";
+    const year = proj.startDate ? proj.startDate.split("-")[0] : "";
+    return (
+      (proj.projectName || "").toLowerCase().includes(queryStr) ||
+      (proj.projectType || "").toLowerCase().includes(queryStr) ||
+      (proj.status || "").toLowerCase().includes(queryStr) ||
+      (proj.techStack || []).some((tech) => tech.toLowerCase().includes(queryStr)) ||
+      clientName.toLowerCase().includes(queryStr) ||
+      companyName.toLowerCase().includes(queryStr) ||
+      year.toLowerCase().includes(queryStr)
+    );
+  });
+
   return (
     <div className="min-h-screen bg-[#060b0d] text-white flex relative">
       {/* Admin Toasts */}
@@ -3298,6 +3389,16 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           >
             <BarChart3 className="w-5 h-5 flex-shrink-0" />
             <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Financials</span>
+          </button>
+          <button
+            onClick={() => {
+              setView("subscriptions-view");
+              setIsSidebarOpen(false);
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all max-[900px]:gap-0 max-[900px]:justify-center ${isSidebarOpen ? 'max-[900px]:gap-3 max-[900px]:px-4 max-[900px]:justify-start' : 'max-[900px]:px-0'} ${view === "subscriptions-view" ? "bg-zarco-cyan/10 text-zarco-cyan border border-zarco-cyan/20" : "text-white/40 hover:text-white hover:bg-white/5"}`}
+          >
+            <CreditCard className="w-5 h-5 flex-shrink-0" />
+            <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Subscriptions</span>
           </button>
           <button
             onClick={() => {
@@ -3653,6 +3754,350 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                 </div>
               </section>
             </div>
+          </div>
+        ) : view === "subscriptions-view" ? (
+          <div className="max-w-6xl mx-auto space-y-8 animate-fade-in text-left">
+            {/* Header section */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-4">
+              <div className="space-y-4">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zarco-cyan/10 border border-zarco-cyan/20">
+                  <CreditCard className="w-3 h-3 text-zarco-cyan" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-zarco-cyan">Recurring Billing</span>
+                </div>
+                <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
+                  Project <span className="text-zarco-cyan">Subscriptions</span>
+                </h1>
+                <p className="text-white/40 font-medium max-w-md">
+                  Manage active recurring support and maintenance plans linked to projects and customers.
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Stats Bento Cards */}
+            {(() => {
+              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
+              const activeSubsCount = subscriptionProjects.filter(p => p.subscriptionPaid).length;
+              const totalSubsCount = subscriptionProjects.length;
+
+              const estMRR = subscriptionProjects
+                .filter(p => p.subscriptionPaid)
+                .reduce((sum, p) => {
+                  const price = Number(p.subscriptionPrice || 0);
+                  if (p.subscriptionInterval === "yearly") {
+                    return sum + (price / 12);
+                  }
+                  return sum + price;
+                }, 0);
+
+              const estARR = estMRR * 12;
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Active Subscriptions</span>
+                      <span className="text-3xl font-black text-zarco-cyan block">{activeSubsCount} <span className="text-xs text-white/40 font-normal">/ {totalSubsCount} total</span></span>
+                    </div>
+                  </Card>
+                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Est. Monthly Revenue (MRR)</span>
+                      <span className="text-3xl font-black text-green-400 block">€{estMRR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </Card>
+                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Est. Annual Revenue (ARR)</span>
+                      <span className="text-3xl font-black text-white block">€{estARR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </Card>
+                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Collection Rate</span>
+                      <span className="text-3xl font-black text-white/90 block">
+                        {totalSubsCount > 0 ? Math.round((activeSubsCount / totalSubsCount) * 100) : 0}%
+                      </span>
+                    </div>
+                  </Card>
+                </div>
+              );
+            })()}
+
+            {/* Filters bar */}
+            {(() => {
+              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
+              const totalSubsCount = subscriptionProjects.length;
+              const activeSubsCount = subscriptionProjects.filter(p => p.subscriptionPaid).length;
+
+              return (
+                <div className="flex flex-col sm:flex-row gap-4 items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                  <div className="relative w-full sm:max-w-xs">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                    <Input
+                      placeholder="Search project or customer..."
+                      value={subSearchQuery}
+                      onChange={(e) => setSubSearchQuery(e.target.value)}
+                      className="pl-10 h-10 bg-black/40 border-white/5 hover:border-white/10 rounded-xl text-xs uppercase tracking-wider text-white font-bold"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 p-1 bg-black/40 rounded-xl">
+                    <button
+                      onClick={() => setSubFilterStatus("all")}
+                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "all" ? "bg-white/10 text-white shadow-md border border-white/5" : "text-white/40 hover:text-white"}`}
+                    >
+                      All ({totalSubsCount})
+                    </button>
+                    <button
+                      onClick={() => setSubFilterStatus("active")}
+                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "active" ? "bg-green-500/10 text-green-400 shadow-md border border-green-500/10" : "text-white/40 hover:text-white"}`}
+                    >
+                      Active ({activeSubsCount})
+                    </button>
+                    <button
+                      onClick={() => setSubFilterStatus("pending")}
+                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "pending" ? "bg-orange-500/10 text-orange-400 shadow-md border border-orange-500/10" : "text-white/40 hover:text-white"}`}
+                    >
+                      Pending ({totalSubsCount - activeSubsCount})
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* List */}
+            {(() => {
+              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
+              const filteredSubs = subscriptionProjects.filter(p => {
+                const clientObj = clients.find(c => c.id === p.clientId);
+                const searchLower = subSearchQuery.toLowerCase();
+                
+                const matchesSearch = 
+                  p.projectName.toLowerCase().includes(searchLower) ||
+                  (p.subscriptionTitle || "").toLowerCase().includes(searchLower) ||
+                  (clientObj?.fullName || "").toLowerCase().includes(searchLower) ||
+                  (clientObj?.email || "").toLowerCase().includes(searchLower) ||
+                  (clientObj?.companyName || "").toLowerCase().includes(searchLower);
+
+                const matchesStatus = 
+                  subFilterStatus === "all" ||
+                  (subFilterStatus === "active" && p.subscriptionPaid) ||
+                  (subFilterStatus === "pending" && !p.subscriptionPaid);
+
+                return matchesSearch && matchesStatus;
+              });
+
+              if (filteredSubs.length === 0) {
+                return (
+                  <Card className="bg-[#080d0f] border-white/5 rounded-3xl p-16 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-6">
+                      <CreditCard className="w-8 h-8 text-white/20" />
+                    </div>
+                    <h3 className="text-lg font-bold text-white uppercase tracking-tight mb-2">No Subscriptions Found</h3>
+                    <p className="text-white/40 text-xs font-semibold max-w-sm mx-auto uppercase tracking-wider">
+                      No subscriptions match your search or filter status. Configure support subscriptions in your projects under Project Management.
+                    </p>
+                  </Card>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  {filteredSubs.map(proj => {
+                    const clientObj = clients.find(c => c.id === proj.clientId);
+                    const nextRenewal = () => {
+                      const paidAt = proj.subscriptionPaidAt ? new Date(proj.subscriptionPaidAt) : new Date();
+                      if (proj.subscriptionInterval === "yearly") {
+                        paidAt.setFullYear(paidAt.getFullYear() + 1);
+                      } else {
+                        paidAt.setMonth(paidAt.getMonth() + 1);
+                      }
+                      return paidAt.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+                    };
+
+                    return (
+                      <Card key={proj.id} className="bg-[#080d0f] border border-white/5 rounded-3xl p-6 md:p-8 hover:border-white/10 transition-all text-left">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                          
+                          {/* 1. Project & Client Info */}
+                          <div className="lg:col-span-4 space-y-3">
+                            <div>
+                              <span className="text-[8px] font-black uppercase tracking-widest text-[#4fd1dc] bg-[#4fd1dc]/10 border border-[#4fd1dc]/20 px-2 py-0.5 rounded-full inline-block mb-1.5">
+                                {proj.projectType}
+                              </span>
+                              <h3 className="text-lg font-black text-white hover:text-zarco-cyan cursor-pointer transition-colors" onClick={() => {
+                                setEditingClientProject(proj);
+                                setView("client-project-form");
+                              }}>
+                                {proj.projectName}
+                              </h3>
+                            </div>
+                            
+                            <div className="p-3 bg-black/40 border border-white/5 rounded-2xl space-y-1.5">
+                              <span className="text-[8px] font-black text-white/30 uppercase tracking-widest block">Customer Info</span>
+                              {clientObj ? (
+                                <div className="text-xs space-y-1 font-bold">
+                                  <span className="text-white block uppercase tracking-tight">{clientObj.fullName}</span>
+                                  {clientObj.companyName && (
+                                    <span className="text-white/60 block text-[10px] uppercase tracking-wider">{clientObj.companyName}</span>
+                                  )}
+                                  <span className="text-[#4fd1dc]/80 text-[10px] block font-mono tracking-normal">{clientObj.email}</span>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">No Client Linked</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 2. Subscription Details */}
+                          <div className="lg:col-span-3 space-y-4">
+                            <div>
+                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Plan Title</span>
+                              <span className="text-sm font-bold text-white block uppercase tracking-tight">{proj.subscriptionTitle || "Support Plan"}</span>
+                            </div>
+
+                            <div>
+                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Price & Cycle</span>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-xl font-black text-white">€{Number(proj.subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span className="text-[9px] font-black text-zarco-cyan uppercase tracking-widest font-mono">/ {proj.subscriptionInterval || "monthly"}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 3. Dates & Status */}
+                          <div className="lg:col-span-3 space-y-4">
+                            <div>
+                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Status</span>
+                              <div>
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                  proj.subscriptionPaid 
+                                    ? "bg-green-500/10 border-green-500/20 text-green-400"
+                                    : "bg-amber-500/10 border-amber-500/20 text-amber-500"
+                                }`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${proj.subscriptionPaid ? "bg-green-400 animate-pulse" : "bg-amber-500"}`} />
+                                  {proj.subscriptionPaid ? "Active & Paid" : "Unpaid / Pending"}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-left">
+                              <div>
+                                <span className="text-[8px] font-black uppercase tracking-widest text-white/30 block">Last Payment</span>
+                                <span className="text-[10px] font-bold text-white/80 font-mono block">
+                                  {proj.subscriptionPaidAt ? new Date(proj.subscriptionPaidAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : "Never"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[8px] font-black uppercase tracking-widest text-white/30 block">Next Payment</span>
+                                <span className="text-[10px] font-bold text-zarco-cyan font-mono block">
+                                  {nextRenewal()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 4. Controls */}
+                          <div className="lg:col-span-2 flex flex-col gap-2 pt-4 lg:pt-0 border-t lg:border-t-0 border-white/5">
+                            <Button
+                              onClick={async () => {
+                                try {
+                                  const projectRef = doc(db, "clientProjects", proj.id);
+                                  const newPaidStatus = !proj.subscriptionPaid;
+                                  const newPaidAt = newPaidStatus ? new Date().toISOString() : null;
+                                  
+                                  await updateDoc(projectRef, {
+                                    subscriptionPaid: newPaidStatus,
+                                    subscriptionPaidAt: newPaidAt,
+                                    updatedAt: new Date()
+                                  });
+
+                                  // Update State
+                                  setClientProjects(prev => prev.map(p => {
+                                    if (p.id === proj.id) {
+                                      return {
+                                        ...p,
+                                        subscriptionPaid: newPaidStatus,
+                                        subscriptionPaidAt: newPaidStatus ? newPaidAt || undefined : undefined
+                                      };
+                                    }
+                                    return p;
+                                  }));
+
+                                  showAdminToast(
+                                    newPaidStatus ? "Subscription marked as Active & Paid!" : "Subscription marked as Unpaid.",
+                                    newPaidStatus ? "success" : "warning"
+                                  );
+                                } catch (err: any) {
+                                  console.error("Error toggling subscription paid status:", err);
+                                  showAdminToast("Failed to update subscription status.", "error");
+                                }
+                              }}
+                              className={`w-full py-2.5 h-10 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${
+                                proj.subscriptionPaid 
+                                  ? "bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500 hover:text-black hover:border-transparent" 
+                                  : "bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black hover:border-transparent"
+                              }`}
+                            >
+                              {proj.subscriptionPaid ? "Mark Unpaid" : "Mark Paid"}
+                            </Button>
+
+                            <Button
+                              onClick={() => {
+                                setEditingClientProject(proj);
+                                setView("client-project-form");
+                              }}
+                              className="w-full py-2.5 h-10 bg-white/5 hover:bg-white/10 text-white/80 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/5"
+                            >
+                              Edit Settings
+                            </Button>
+
+                            <Button
+                              onClick={async () => {
+                                if (!window.confirm(`Are you sure you want to deactivate the subscription for "${proj.projectName}"?`)) {
+                                  return;
+                                }
+                                try {
+                                  const projectRef = doc(db, "clientProjects", proj.id);
+                                  await updateDoc(projectRef, {
+                                    hasSubscription: false,
+                                    subscriptionPaid: false,
+                                    subscriptionPaidAt: null,
+                                    updatedAt: new Date()
+                                  });
+
+                                  // Update State
+                                  setClientProjects(prev => prev.map(p => {
+                                    if (p.id === proj.id) {
+                                      return {
+                                        ...p,
+                                        hasSubscription: false,
+                                        subscriptionPaid: false,
+                                        subscriptionPaidAt: undefined
+                                      };
+                                    }
+                                    return p;
+                                  }));
+
+                                  showAdminToast("Subscription deactivated successfully.", "success");
+                                } catch (err: any) {
+                                  console.error("Error deactivating subscription:", err);
+                                  showAdminToast("Failed to deactivate subscription.", "error");
+                                }
+                              }}
+                              className="w-full py-1.5 h-8 bg-transparent text-red-500/50 hover:text-red-500 hover:bg-red-500/5 rounded-xl text-[8px] font-bold uppercase tracking-wider border border-transparent hover:border-red-500/20 mt-1"
+                            >
+                              Deactivate
+                            </Button>
+                          </div>
+
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         ) : view === "subscribers" ? (
           <div className="max-w-6xl mx-auto space-y-8">
@@ -5238,6 +5683,30 @@ SWIFT: ABCDEFGH"
               </Button>
             </div>
 
+            {/* Admin Portfolio Search Bar */}
+            {projects.length > 0 && (
+              <div className="relative mb-8 max-w-md animate-fade-in">
+                <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
+                  <Search className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  value={adminProjectSearch}
+                  onChange={(e) => setAdminProjectSearch(e.target.value)}
+                  placeholder="Search projects by title, year, company/institution..."
+                  className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
+                />
+                {adminProjectSearch && (
+                  <button
+                    onClick={() => setAdminProjectSearch('')}
+                    className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {projects.length === 0 ? (
                 <div className="col-span-full py-32 flex flex-col items-center justify-center border-2 border-dashed border-white/5 rounded-[3rem] bg-white/[0.01]">
@@ -5249,8 +5718,20 @@ SWIFT: ABCDEFGH"
                     Start by creating your first bespoke experience
                   </p>
                 </div>
+              ) : filteredProjects.length === 0 ? (
+                <div className="col-span-full py-20 text-center border border-white/5 rounded-[2.5rem] bg-white/[0.01] flex flex-col items-center justify-center gap-4">
+                  <p className="text-white/40 font-bold uppercase tracking-widest text-[11px]">
+                    No projects match your search criteria.
+                  </p>
+                  <button
+                    onClick={() => setAdminProjectSearch('')}
+                    className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    Clear Filter
+                  </button>
+                </div>
               ) : (
-                projects.map((project) => (
+                filteredProjects.map((project) => (
                   <Card
                     key={project.id}
                     className="bg-[#0a1114] border-white/5 rounded-[2rem] overflow-hidden group hover:border-zarco-cyan/20 transition-all"
@@ -6151,6 +6632,30 @@ SWIFT: ABCDEFGH"
               </Button>
             </div>
 
+            {/* Admin Projects / Client Spaces Search Bar */}
+            {clientProjects.length > 0 && !loadingClientProjects && (
+              <div className="relative mb-8 max-w-md animate-fade-in">
+                <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
+                  <Search className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  value={adminClientProjectSearch}
+                  onChange={(e) => setAdminClientProjectSearch(e.target.value)}
+                  placeholder="Search projects by name, status, client or year..."
+                  className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
+                />
+                {adminClientProjectSearch && (
+                  <button
+                    onClick={() => setAdminClientProjectSearch('')}
+                    className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="grid gap-6">
               {loadingClientProjects ? (
                 <div className="py-32 flex flex-col items-center justify-center border-2 border-dashed border-white/5 rounded-[3rem] bg-white/[0.01]">
@@ -6172,8 +6677,20 @@ SWIFT: ABCDEFGH"
                     Select Client to Start Project
                   </Button>
                 </div>
+              ) : filteredClientProjects.length === 0 ? (
+                <div className="py-20 text-center border border-white/5 rounded-[2.5rem] bg-white/[0.01] flex flex-col items-center justify-center gap-4 animate-fade-in">
+                  <p className="text-white/40 font-bold uppercase tracking-widest text-[11px]">
+                    No projects match your search criteria.
+                  </p>
+                  <button
+                    onClick={() => setAdminClientProjectSearch('')}
+                    className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    Clear Filter
+                  </button>
+                </div>
               ) : (
-                clientProjects.map((proj) => {
+                filteredClientProjects.map((proj) => {
                   const client = clients.find((c) => c.id === proj.clientId);
                   const providers = Array.from(
                     new Set([
@@ -6205,6 +6722,15 @@ SWIFT: ABCDEFGH"
                               <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">
                                 {proj.projectType}
                               </span>
+                              {proj.hasSubscription && (
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter border ${
+                                  proj.subscriptionPaid 
+                                    ? "bg-green-500/10 border-green-500/20 text-green-400"
+                                    : "bg-amber-500/10 border-amber-500/20 text-amber-500"
+                                }`}>
+                                  {proj.subscriptionPaid ? "⚡ Sub Active" : "⚡ Sub Enabled"}
+                                </span>
+                              )}
                               {((proj.domainName || proj.providerUrl ? 1 : 0) + (proj.hosts?.length || 0)) > 0 && (
                                 <span className="px-2 py-0.5 bg-zarco-cyan/10 border border-zarco-cyan/20 rounded text-[8px] font-black text-zarco-cyan uppercase tracking-tighter">
                                   {(proj.domainName || proj.providerUrl ? 1 : 0) + (proj.hosts?.length || 0)} {(proj.domainName || proj.providerUrl ? 1 : 0) + (proj.hosts?.length || 0) === 1 ? 'Asset' : 'Assets'}
@@ -6963,9 +7489,20 @@ SWIFT: ABCDEFGH"
                             {proj.status}
                           </div>
 
-                          <span className="text-[10px] font-black text-zarco-cyan uppercase tracking-widest mb-1">
-                            {proj.projectType || "Standard"}
-                          </span>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[10px] font-black text-zarco-cyan uppercase tracking-widest">
+                              {proj.projectType || "Standard"}
+                            </span>
+                            {proj.hasSubscription && (
+                              <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter border ${
+                                proj.subscriptionPaid 
+                                  ? "bg-green-500/10 border-green-500/20 text-green-400"
+                                  : "bg-amber-500/10 border-amber-500/20 text-amber-500"
+                              }`}>
+                                {proj.subscriptionPaid ? "⚡ Sub Active" : "⚡ Sub Enabled"}
+                              </span>
+                            )}
+                          </div>
                           <h4 className="text-xl font-bold uppercase tracking-tight mb-6 leading-tight">
                             {proj.projectName}
                           </h4>
@@ -8334,6 +8871,243 @@ SWIFT: ABCDEFGH"
                             : "Inactive"}
                         </div>
                       </div>
+                    </div>
+
+                    {/* Add Subscription Section */}
+                    <div className="border-t border-white/5 pt-6 mt-6 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-bold uppercase tracking-tight text-white flex items-center gap-2">
+                            <span>💳</span> Recurring Subscription
+                          </h4>
+                          <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">
+                            Manage support or secondary plans billing configurations
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            if (editingClientProject.hasSubscription) {
+                              setShowAdminUnsubscribeModal(true);
+                            } else {
+                              setEditingClientProject({
+                                ...editingClientProject,
+                                hasSubscription: true,
+                              });
+                            }
+                          }}
+                          className={`h-9 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                            editingClientProject.hasSubscription
+                              ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20"
+                              : "bg-zarco-cyan text-black"
+                          }`}
+                        >
+                          {editingClientProject.hasSubscription ? "Remove Subscription" : "Add Subscription"}
+                        </Button>
+                      </div>
+
+                      {editingClientProject.hasSubscription && (
+                        <div className="space-y-4 p-5 bg-white/[0.01] border border-white/5 rounded-2xl animate-fade-in text-left">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                                Subscription Title
+                              </label>
+                              <Input
+                                value={editingClientProject.subscriptionTitle || ""}
+                                onChange={(e) =>
+                                  setEditingClientProject({
+                                    ...editingClientProject,
+                                    subscriptionTitle: e.target.value,
+                                  })
+                                }
+                                placeholder="E.g. Monthly Maintenance & Hosting"
+                                className="bg-[#0c1417] border-white/10 rounded-xl h-12"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                                Price (€) & Cycle
+                              </label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input
+                                  type="number"
+                                  value={editingClientProject.subscriptionPrice || ""}
+                                  onChange={(e) =>
+                                    setEditingClientProject({
+                                      ...editingClientProject,
+                                      subscriptionPrice: e.target.value,
+                                    })
+                                  }
+                                  placeholder="E.g. 150"
+                                  className="bg-[#0c1417] border-white/10 rounded-xl h-12"
+                                />
+                                <select
+                                  value={editingClientProject.subscriptionInterval || "monthly"}
+                                  onChange={(e) =>
+                                    setEditingClientProject({
+                                      ...editingClientProject,
+                                      subscriptionInterval: e.target.value as any,
+                                    })
+                                  }
+                                  className="w-full bg-[#0c1417] border border-white/10 rounded-xl px-4 h-12 focus:outline-none focus:border-zarco-cyan text-white/70 text-xs font-bold"
+                                >
+                                  <option value="monthly">Monthly</option>
+                                  <option value="yearly">Yearly</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                              Subscription Description
+                            </label>
+                            <textarea
+                              value={editingClientProject.subscriptionDescription || ""}
+                              onChange={(e) =>
+                                setEditingClientProject({
+                                  ...editingClientProject,
+                                  subscriptionDescription: e.target.value,
+                                })
+                              }
+                              placeholder="Describe what is included in this plan..."
+                              className="w-full bg-[#0c1417] border border-white/10 rounded-xl p-4 h-24 focus:outline-none focus:border-zarco-cyan text-sm text-white/70"
+                            />
+                          </div>
+
+                          {/* Plan Coverage Layout: Dynamic Feature Benefit List */}
+                          <div className="space-y-4 p-5 bg-white/[0.01] border border-white/5 rounded-2xl">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-black text-zarco-cyan uppercase tracking-widest block">
+                                Subscription Included Benefits & SLA List
+                              </span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => {
+                                  const defaults = [
+                                    "Suporte Dedicado via Slack",
+                                    "Auditorias de Segurança Proativas",
+                                    "Servidor de Produção Optimizado"
+                                  ];
+                                  setEditingClientProject({
+                                    ...editingClientProject,
+                                    subscriptionFeatures: [
+                                      ...(editingClientProject.subscriptionFeatures || []),
+                                      ...defaults.filter(d => !(editingClientProject.subscriptionFeatures || []).includes(d))
+                                    ]
+                                  });
+                                }}
+                                className="bg-zarco-cyan/10 hover:bg-zarco-cyan/20 text-[#4fd1dc] text-[8px] font-black tracking-wider px-3 h-7 rounded-lg border-none"
+                              >
+                                ⚡ Load Defaults
+                              </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                              {/* Add Feature input group */}
+                              <div className="flex gap-2">
+                                <Input
+                                  value={newSubscriptionFeature}
+                                  onChange={(e) => setNewSubscriptionFeature(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      if (newSubscriptionFeature.trim()) {
+                                        const currentFeatures = editingClientProject.subscriptionFeatures || [];
+                                        setEditingClientProject({
+                                          ...editingClientProject,
+                                          subscriptionFeatures: [...currentFeatures, newSubscriptionFeature.trim()]
+                                        });
+                                        setNewSubscriptionFeature("");
+                                      }
+                                    }
+                                  }}
+                                  placeholder="E.g. Daily Backup Strategy..."
+                                  className="bg-[#0c1417] border-white/10 rounded-xl h-10 flex-1 text-xs"
+                                />
+                                <Button
+                                  type="button"
+                                  onClick={() => {
+                                    if (newSubscriptionFeature.trim()) {
+                                      const currentFeatures = editingClientProject.subscriptionFeatures || [];
+                                      setEditingClientProject({
+                                        ...editingClientProject,
+                                        subscriptionFeatures: [...currentFeatures, newSubscriptionFeature.trim()]
+                                      });
+                                      setNewSubscriptionFeature("");
+                                    }
+                                  }}
+                                  className="bg-zarco-cyan text-black px-4 h-10 rounded-xl"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </Button>
+                              </div>
+
+                              {/* Features List */}
+                              <div className="space-y-1.5 pt-2 max-h-48 overflow-y-auto">
+                                {!editingClientProject.subscriptionFeatures || editingClientProject.subscriptionFeatures.length === 0 ? (
+                                  <p className="text-[10px] text-white/30 italic uppercase font-bold tracking-wider py-1">
+                                    No custom benefits configured yet. Load defaults or type above to add.
+                                  </p>
+                                ) : (
+                                  editingClientProject.subscriptionFeatures.map((feat, index) => (
+                                    <div
+                                      key={index}
+                                      className="flex items-center justify-between p-2.5 bg-[#0c1417]/50 rounded-xl border border-white/5 group hover:border-white/10 transition-all"
+                                    >
+                                      <span className="text-[10px] text-white/70 font-semibold uppercase tracking-wider">
+                                        {feat}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const filtered = (editingClientProject.subscriptionFeatures || []).filter((_, i) => i !== index);
+                                          setEditingClientProject({
+                                            ...editingClientProject,
+                                            subscriptionFeatures: filtered
+                                          });
+                                        }}
+                                        className="text-white/30 hover:text-red-400 p-1 rounded transition-colors"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                            <div className="space-y-0.5">
+                              <span className="text-[10px] font-bold text-white uppercase tracking-wider block">
+                                Show on Customer Portal
+                              </span>
+                              <span className="text-[8px] text-white/40 font-bold uppercase tracking-widest block">
+                                Allow consumer to checkout via Stripe directly
+                              </span>
+                            </div>
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                setEditingClientProject({
+                                  ...editingClientProject,
+                                  subscriptionEnabled: !editingClientProject.subscriptionEnabled,
+                                })
+                              }
+                              className={`h-9 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                                editingClientProject.subscriptionEnabled
+                                  ? "bg-green-500/10 border border-green-500/20 text-green-500"
+                                  : "bg-white/5 border border-white/10 text-white/30"
+                              }`}
+                            >
+                              {editingClientProject.subscriptionEnabled ? "Shown / Enabled" : "Hidden / Inactive"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -10959,6 +11733,30 @@ SWIFT: ABCDEFGH"
               </Button>
             </div>
 
+            {/* Admin Billing Search Bar */}
+            {invoices.length > 0 && (
+              <div className="relative mb-8 max-w-md animate-fade-in">
+                <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
+                  <Search className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  value={adminBillingSearch}
+                  onChange={(e) => setAdminBillingSearch(e.target.value)}
+                  placeholder="Search bills by year, company title..."
+                  className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
+                />
+                {adminBillingSearch && (
+                  <button
+                    onClick={() => setAdminBillingSearch('')}
+                    className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="grid gap-6">
               {loadingInvoices ? (
                 <div className="py-32 flex flex-col items-center justify-center border-2 border-dashed border-white/5 rounded-[3rem] bg-white/[0.01]">
@@ -10980,8 +11778,20 @@ SWIFT: ABCDEFGH"
                     Issue First Invoice
                   </Button>
                 </div>
+              ) : filteredInvoices.length === 0 ? (
+                <div className="py-20 text-center border border-white/5 rounded-[2.5rem] bg-white/[0.01] flex flex-col items-center justify-center gap-4 animate-fade-in">
+                  <p className="text-white/40 font-bold uppercase tracking-widest text-[11px]">
+                    No invoices match your search criteria.
+                  </p>
+                  <button
+                    onClick={() => setAdminBillingSearch('')}
+                    className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    Clear Filter
+                  </button>
+                </div>
               ) : (
-                invoices.map((invoice) => {
+                filteredInvoices.map((invoice) => {
                   const client = clients.find((c) => c.id === invoice.clientId);
                   const project = clientProjects.find((p) => p.id === invoice.projectId);
                   return (
@@ -13107,6 +13917,54 @@ SWIFT: ABCDEFGH"
                 >
                   <Check className="w-4 h-4" />
                   Apply Specifications
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {showAdminUnsubscribeModal && editingClientProject && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-300">
+          <Card className="bg-[#0a1114] border border-white/10 w-full max-w-md rounded-[2.5rem] p-10 shadow-2xl relative overflow-hidden text-center animate-in zoom-in-95 duration-300">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-red-500" />
+            
+            <div className="flex flex-col items-center space-y-6">
+              <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                <Trash2 className="w-8 h-8 text-red-500" />
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-white uppercase tracking-tight">
+                  Are you sure you wanna unsubscribe it?
+                </h3>
+                <p className="text-white/50 text-xs leading-relaxed font-bold uppercase tracking-wider">
+                  You are about to turn off recurring subscription billing for this project. If there is an active subscriber or subscription record, it will be deactivated.
+                </p>
+              </div>
+
+              <div className="flex gap-4 w-full pt-4">
+                <Button
+                  type="button"
+                  onClick={() => setShowAdminUnsubscribeModal(false)}
+                  className="flex-1 bg-white/5 border border-white/5 hover:bg-white/10 text-white font-heavy h-12 rounded-xl uppercase tracking-widest text-[10px]"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setEditingClientProject({
+                      ...editingClientProject,
+                      hasSubscription: false,
+                      subscriptionPaid: false,
+                    });
+                    setShowAdminUnsubscribeModal(false);
+                    showAdminToast("Subscription feature deactivated (Click Save Changes to apply)", "warning");
+                  }}
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white font-heavy h-12 rounded-xl border-none uppercase tracking-widest text-[10px]"
+                >
+                  Unsubscribe
                 </Button>
               </div>
             </div>

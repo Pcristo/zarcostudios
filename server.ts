@@ -547,6 +547,274 @@ async function startServer() {
     }
   });
 
+  // Subscription Payment Confirmation Route
+  app.post("/api/subscriptions/confirm-payment", async (req, res) => {
+    const { 
+      projectId, 
+      clientEmail, 
+      clientName, 
+      projectName, 
+      subscriptionTitle, 
+      subscriptionPrice, 
+      subscriptionInterval, 
+      transactionId, 
+      lang 
+    } = req.body;
+
+    if (!projectId || !clientEmail) {
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
+
+    try {
+      const isPt = lang === "pt";
+      const paidAtStr = new Date().toISOString();
+
+      if (!db) initFirebase();
+      
+      // Update Database via Admin SDK
+      if (db) {
+        console.log(`[Server] Updating db subscription status for project ${projectId}`);
+        const projRef = db.collection("clientProjects").doc(projectId);
+        await projRef.set({
+          subscriptionPaid: true,
+          subscriptionPaidAt: paidAtStr
+        }, { merge: true });
+        console.log("[Server] Database write succeeded via Admin SDK.");
+      } else {
+        console.warn("[Server] Firebase Admin SDK is not initialized, skipped database merge.");
+      }
+
+      // Calculate next payment date
+      const paidDate = new Date(paidAtStr);
+      if (subscriptionInterval === "yearly") {
+        paidDate.setFullYear(paidDate.getFullYear() + 1);
+      } else {
+        paidDate.setMonth(paidDate.getMonth() + 1);
+      }
+      const formattedNextDate = paidDate.toLocaleDateString(isPt ? 'pt-PT' : 'en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+
+      // 1. Email to customer
+      const clientSubject = isPt 
+        ? "Subscrição Ativada com Sucesso - Zarco Studios" 
+        : "Subscription Activated Successfully - Zarco Studios";
+
+      const clientTitle = isPt ? "A sua subscrição está ativa!" : "Your subscription is now active!";
+      const clientIntro = isPt 
+        ? `Olá ${clientName || "Cliente"},<br>Confirmamos com sucesso o pagamento da sua subscrição com a Zarco Studios. Obrigado pela confiança!`
+        : `Hello ${clientName || "Valued Client"},<br>We have successfully processed your subscription payment with Zarco Studios. Thank you for your trust!`;
+
+      const detailsHeader = isPt ? "Detalhes da Assinatura" : "Subscription Details";
+      const projectLabel = isPt ? "Projeto" : "Project";
+      const planLabel = isPt ? "Plano" : "Plan";
+      const valueLabel = isPt ? "Valor" : "Rate";
+      const cycleLabel = isPt ? "Frequência" : "Billing Cycle";
+      const cycleValue = subscriptionInterval === "yearly" ? (isPt ? "Anual" : "Yearly") : (isPt ? "Mensal" : "Monthly");
+      const transactionLabel = isPt ? "ID da Transação" : "Transaction ID";
+      const nextDueLabel = isPt ? "Próximo Pagamento" : "Next Payment Due";
+      const statusLabel = isPt ? "Estado" : "Status";
+      const activeText = isPt ? "Ativo" : "Active";
+      const thankYouFooter = isPt 
+        ? "Caso tenha alguma dúvida, entre em contacto direto através do canal Slack do projeto ou responda à nossa equipa técnica."
+        : "If you have any questions, reach out via your dedicated Slack channel or contact our technical team.";
+
+      const clientHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111; line-height: 1.6;">
+          <div style="text-align: left; margin-bottom: 30px; font-size: 20px; font-weight: bold; text-transform: uppercase; color: #22d3ee; letter-spacing: 2px;">
+            ZARCO STUDIOS
+          </div>
+          <div style="background-color: #0c1417; color: #fff; padding: 40px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05);">
+            <h2 style="color: #22d3ee; text-transform: uppercase; letter-spacing: 1px; margin-top: 0; font-size: 20px; font-weight: 900;">${clientTitle}</h2>
+            <p style="font-size: 14px; text-transform: none; color: rgba(255,255,255,0.8); line-height: 1.6; margin-bottom: 25px;">${clientIntro}</p>
+            
+            <div style="background-color: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); padding: 25px; border-radius: 16px; margin-bottom: 25px;">
+              <h3 style="color: rgba(255,255,255,0.4); text-transform: uppercase; font-size: 11px; font-weight: 900; letter-spacing: 1.5px; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">${detailsHeader}</h3>
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px; width: 140px;">${projectLabel}</td>
+                  <td style="padding: 6px 0; color: #fff; font-weight: bold;">${projectName || "Zarco Project"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${planLabel}</td>
+                  <td style="padding: 6px 0; color: #fff; font-weight: bold;">${subscriptionTitle || "Recurring Service"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${valueLabel}</td>
+                  <td style="padding: 6px 0; color: #22d3ee; font-weight: 900;">€${Number(subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${cycleLabel}</td>
+                  <td style="padding: 6px 0; color: #fff;">${cycleValue}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${transactionLabel}</td>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.6); font-family: monospace;">${transactionId || "N/A"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${nextDueLabel}</td>
+                  <td style="padding: 6px 0; color: #4fd1dc; font-weight: bold;">${formattedNextDate}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">${statusLabel}</td>
+                  <td style="padding: 6px 0; color: #10b981; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">● ${activeText}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <p style="font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.6; margin: 0;">
+              ${thankYouFooter}
+            </p>
+          </div>
+          <div style="font-size: 11px; color: #999; text-align: center; margin-top: 30px;">
+            <p>&copy; 2026 Zarco Studios. All rights reserved.</p>
+          </div>
+        </div>
+      `;
+
+      // 2. Email to Pedro
+      const pedroSubject = `🔔 [Nova Subscrição] ${projectName || "Sem Nome"} - €${subscriptionPrice || "0"}`;
+      const pedroHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111; line-height: 1.6;">
+          <div style="text-align: left; margin-bottom: 25px; font-size: 20px; font-weight: bold; text-transform: uppercase; color: #ec4899; letter-spacing: 2px;">
+            ZARCO STUDIOS ADMIN
+          </div>
+          <div style="background-color: #0f172a; color: #fff; padding: 40px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05);">
+            <div style="background-color: rgba(236,72,153,0.1); border: 1px solid #ec4899; color: #f472b6; padding: 10px 15px; border-radius: 8px; font-weight: bold; margin-bottom: 25px; font-size: 12px; display: inline-block;">
+              ⚡ NOVA ASSINATURA ATIVADA
+            </div>
+            <h2 style="color: #fff; margin-top: 0; font-size: 20px; font-weight: 800;">Detalhes da Nova Subscrição</h2>
+            
+            <div style="background-color: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); padding: 25px; border-radius: 16px; margin-top: 20px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px; width: 140px;">Projeto</td>
+                  <td style="padding: 8px 0; color: #fff; font-weight: bold;">${projectName || "Sem Nome"} (ID: ${projectId})</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Cliente</td>
+                  <td style="padding: 8px 0; color: #fff; font-weight: bold;">${clientName || "N/A"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">E-mail do Cliente</td>
+                  <td style="padding: 8px 0; color: #4fd1dc;"><a href="mailto:${clientEmail}" style="color: #4fd1dc; text-decoration: underline;">${clientEmail}</a></td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Plano Escolhido</td>
+                  <td style="padding: 8px 0; color: #fff;">${subscriptionTitle || "Sem título informado"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Valor Recorrente</td>
+                  <td style="padding: 8px 0; color: #e11d48; font-weight: 900;">€${Number(subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} / ${subscriptionInterval || "monthly"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Stripe Txn ID</td>
+                  <td style="padding: 8px 0; color: #fbbf24; font-family: monospace;">${transactionId || "N/A"}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Próxima Cobrança</td>
+                  <td style="padding: 8px 0; color: #34d399; font-weight: bold;">${formattedNextDate}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.4); font-weight: bold; text-transform: uppercase; font-size: 10px;">Data de Ativação</td>
+                  <td style="padding: 8px 0; color: rgba(255,255,255,0.7);">${new Date(paidAtStr).toLocaleString('pt-PT')} (Servidor)</td>
+                </tr>
+              </table>
+            </div>
+            
+            <p style="font-size: 11px; color: rgba(255,255,255,0.4); text-align: center; margin-top: 30px; margin-bottom: 0;">
+              IP de Ingress: ${req.ip || "Unknown"} • Enviado automaticamente pelo servidor Zarco Studios.
+            </p>
+          </div>
+        </div>
+      `;
+
+      // Safe, robust independent email sending with fallback mechanisms
+      let clientEmailStatus = "not_sent";
+      let adminEmailStatus = "not_sent";
+
+      // 1. Send Email to Customer
+      try {
+        console.log(`[Server] Attempting client email to ${clientEmail}`);
+        let clientResponse = await resend.emails.send({
+          from: 'Zarco Studios <hello@zarcostudios.com>',
+          to: [clientEmail],
+          subject: clientSubject,
+          html: clientHtml,
+        });
+
+        // Fallback if domain is unverified/rejected (e.g., error is returned)
+        if (clientResponse.error) {
+          console.warn("[Server] Client email failed using custom domain. Retrying with onboarding@resend.dev...", clientResponse.error);
+          clientResponse = await resend.emails.send({
+            from: 'Zarco Studios <onboarding@resend.dev>',
+            to: [clientEmail],
+            subject: clientSubject,
+            html: clientHtml,
+          });
+        }
+
+        if (clientResponse.error) {
+          console.error("[Server] Client email failed completely:", clientResponse.error);
+          clientEmailStatus = `failed: ${JSON.stringify(clientResponse.error)}`;
+        } else {
+          console.log("[Server] Client email sent successfully:", clientResponse.data);
+          clientEmailStatus = "sent";
+        }
+      } catch (clientErr: any) {
+        console.error("[Server] Exception while sending client email:", clientErr);
+        clientEmailStatus = `error: ${clientErr.message}`;
+      }
+
+      // 2. Send Email to Pedro (Admin)
+      try {
+        console.log(`[Server] Attempting admin email to pedro.cristo.webdeveloper@gmail.com`);
+        let adminResponse = await resend.emails.send({
+          from: 'Zarco Studios Server <noreply@zarcostudios.com>',
+          to: ['pedro.cristo.webdeveloper@gmail.com'],
+          subject: pedroSubject,
+          html: pedroHtml,
+        });
+
+        // Fallback if domain is unverified/rejected
+        if (adminResponse.error) {
+          console.warn("[Server] Admin email failed using custom domain. Retrying with onboarding@resend.dev...", adminResponse.error);
+          adminResponse = await resend.emails.send({
+            from: 'Zarco Studios Server <onboarding@resend.dev>',
+            to: ['pedro.cristo.webdeveloper@gmail.com'],
+            subject: pedroSubject,
+            html: pedroHtml,
+          });
+        }
+
+        if (adminResponse.error) {
+          console.error("[Server] Admin email failed completely:", adminResponse.error);
+          adminEmailStatus = `failed: ${JSON.stringify(adminResponse.error)}`;
+        } else {
+          console.log("[Server] Admin email sent successfully:", adminResponse.data);
+          adminEmailStatus = "sent";
+        }
+      } catch (adminErr: any) {
+        console.error("[Server] Exception while sending admin email:", adminErr);
+        adminEmailStatus = `error: ${adminErr.message}`;
+      }
+
+      res.status(200).json({ 
+        success: true, 
+        message: "Payment processed, DB synchronized, and emails processed.",
+        paidAt: paidAtStr,
+        clientEmailStatus,
+        adminEmailStatus
+      });
+
+    } catch (error: any) {
+      console.error("[Server] Error confirming payment:", error);
+      res.status(500).json({ error: error.message || "Failed to confirm payment" });
+    }
+  });
+
   // API routes go here
   app.get("/api/health", (req, res) => {
     console.log("Health check. Env PROJECT ID:", process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || "not set");

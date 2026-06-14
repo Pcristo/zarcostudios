@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { ArrowRight, ArrowUpRight, ExternalLink, Github, Calendar, GraduationCap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, ExternalLink, Github, Calendar, GraduationCap, Search, X } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 
@@ -109,6 +109,8 @@ export function Portfolio({ featuredOnly = false }: { featuredOnly?: boolean }) 
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
 
   const isPt = i18n.language === 'pt';
 
@@ -180,8 +182,38 @@ export function Portfolio({ featuredOnly = false }: { featuredOnly?: boolean }) 
     );
   };
 
-  const portfolioProjects = projects.filter(p => !p.category || p.category.toLowerCase() !== 'college');
-  const collegeProjects = projects.filter(p => p.category && p.category.toLowerCase() === 'college');
+  // Get dynamic category pills from the projects (non-null and non-empty)
+  const uniqueCategories = Array.from(
+    new Set(projects.map(p => p.category).filter(Boolean))
+  );
+  const categories = ['All', ...uniqueCategories];
+
+  const filteredProjects = projects.filter(project => {
+    // 1. Matches Category Filter
+    if (selectedCategory !== 'All' && project.category !== selectedCategory) {
+      return false;
+    }
+
+    // 2. Matches Search Query
+    if (searchQuery.trim() === '') {
+      return true;
+    }
+
+    const queryLower = searchQuery.toLowerCase().trim();
+    const titleMatch = getTitle(project).toLowerCase().includes(queryLower);
+    const shortDescText = getShortDesc(project) || '';
+    const fullDescText = getFullDesc(project) || '';
+    const descMatch = shortDescText.toLowerCase().includes(queryLower) || 
+                      fullDescText.toLowerCase().includes(queryLower);
+    const categoryMatch = (project.category || '').toLowerCase().includes(queryLower);
+    const techMatch = (project.techStack || []).some(tech => tech.toLowerCase().includes(queryLower));
+    const instMatch = (project.institution || '').toLowerCase().includes(queryLower);
+
+    return titleMatch || descMatch || categoryMatch || techMatch || instMatch;
+  });
+
+  const portfolioProjects = filteredProjects.filter(p => !p.category || p.category.toLowerCase() !== 'college');
+  const collegeProjects = filteredProjects.filter(p => p.category && p.category.toLowerCase() === 'college');
 
   const renderProjectCard = (project: Project, index: number) => (
     <motion.div
@@ -265,12 +297,80 @@ export function Portfolio({ featuredOnly = false }: { featuredOnly?: boolean }) 
           )}
         </div>
 
+        {/* Search & Filters UI */}
+        {projects.length > 0 && (
+          <div className="flex flex-col md:flex-row gap-6 items-stretch md:items-center justify-between mb-16 pb-8 border-b border-white/5">
+            {/* Search Input Box */}
+            <div className="relative flex-1 max-w-md animate-fade-in">
+              <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
+                <Search className="w-4 h-4" />
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={isPt ? "Pesquisar projetos, tecnologias..." : "Search projects, tech stack..."}
+                className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Service & Category Filter Pills */}
+            <div className="flex flex-wrap gap-2 items-center">
+              {categories.map((cat) => {
+                const isSelected = selectedCategory === cat;
+                const label = cat === 'All' ? (isPt ? 'Todos' : 'All') : cat;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                      isSelected
+                        ? "bg-zarco-cyan text-black shadow-lg shadow-zarco-cyan/20 duration-300"
+                        : "bg-white/[0.02] text-white/50 border border-white/5 hover:border-white/10 hover:text-white"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {projects.length === 0 && !loading ? (
            <div className="col-span-full py-20 text-center border-2 border-dashed border-white/5 rounded-[3rem]">
               <p className="text-white/20 font-bold uppercase tracking-widest text-sm">No projects found in the database.</p>
            </div>
         ) : (
           <div className="space-y-32">
+            {/* Filtered empty state */}
+            {filteredProjects.length === 0 && !loading && (
+              <div className="py-20 text-center border border-white/5 rounded-[2.5rem] bg-white/[0.01] flex flex-col items-center justify-center gap-4">
+                <p className="text-white/40 font-bold uppercase tracking-widest text-[11px]">
+                  {isPt 
+                    ? "Nenhum projeto corresponde à sua pesquisa." 
+                    : "No projects match your search criteria."}
+                </p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('All');
+                  }}
+                  className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  {isPt ? 'Limpar Filtros' : 'Clear Filters'}
+                </button>
+              </div>
+            )}
+
             {/* Portfolio Grid */}
             {portfolioProjects.length > 0 && (
               <div className="grid md:grid-cols-3 gap-8 text-zarco-white">

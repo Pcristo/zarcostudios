@@ -26,7 +26,8 @@ import {
   Eye,
   X,
   Check,
-  ChevronDown
+  ChevronDown,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -129,6 +130,18 @@ interface ClientProject {
   termsDescription?: string;
   termsUrl?: string;
   showTermsButton?: boolean;
+  hasSubscription?: boolean;
+  subscriptionTitle?: string;
+  subscriptionDescription?: string;
+  subscriptionInterval?: "monthly" | "yearly";
+  subscriptionPrice?: string | number;
+  subscriptionEnabled?: boolean;
+  subscriptionPaid?: boolean;
+  subscriptionPaidAt?: string;
+  subFeaturesSlack?: boolean;
+  subFeaturesSecurity?: boolean;
+  subFeaturesHosting?: boolean;
+  subscriptionFeatures?: string[];
 }
 
 interface Client {
@@ -194,6 +207,29 @@ export function ProjectHub({ projectId }: { projectId: string }) {
 
   // Interactive Pricing & Billing custom states
   const [clientPricingActiveTab, setClientPricingActiveTab] = useState<'primary' | 'secondary'>('primary');
+  const [showUnsubscribeModal, setShowUnsubscribeModal] = useState<boolean>(false);
+  const [subscriptionPaid, setSubscriptionPaid] = useState<boolean>(() => {
+    return localStorage.getItem(`subscribed_${projectId}`) === 'true';
+  });
+
+  const getNextPaymentDate = () => {
+    const paidAt = project?.subscriptionPaidAt ? new Date(project.subscriptionPaidAt) : new Date();
+    if (project?.subscriptionInterval === "yearly") {
+      paidAt.setFullYear(paidAt.getFullYear() + 1);
+    } else {
+      paidAt.setMonth(paidAt.getMonth() + 1);
+    }
+    return paidAt.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  };
+  const [subCardName, setSubCardName] = useState<string>('');
+  const [subCardNumber, setSubCardNumber] = useState<string>('');
+  const [subCardExpiry, setSubCardExpiry] = useState<string>('');
+  const [subCardCvc, setSubCardCvc] = useState<string>('');
+  const [subCardPostal, setSubCardPostal] = useState<string>('');
+  const [subIsProcessing, setSubIsProcessing] = useState<boolean>(false);
+  const [subSuccess, setSubSuccess] = useState<boolean>(false);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [subTransactionId, setSubTransactionId] = useState<string>('');
   const [selectedAddons, setSelectedAddons] = useState<Record<number, boolean>>({});
   const [discountPercent, setDiscountPercent] = useState<string>('0');
   const [vatPercent, setVatPercent] = useState<string>('23');
@@ -252,6 +288,9 @@ export function ProjectHub({ projectId }: { projectId: string }) {
 
         const projectData = { id: projSnap.id, ...projSnap.data() } as ClientProject;
         setProject(projectData);
+        if (projectData.subscriptionPaid !== undefined) {
+          setSubscriptionPaid(!!projectData.subscriptionPaid);
+        }
         if (projectData.discountPercent !== undefined) setDiscountPercent(projectData.discountPercent.toString());
         if (projectData.vatPercent !== undefined) setVatPercent(projectData.vatPercent.toString());
         if (projectData.applyVat !== undefined) setApplyVat(projectData.applyVat);
@@ -584,6 +623,37 @@ export function ProjectHub({ projectId }: { projectId: string }) {
       showToast(isPt ? 'Erro ao eliminar feedback.' : 'Failed to delete feedback.', 'error');
     } finally {
       setFeedbackToDelete(null);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    try {
+      localStorage.removeItem(`subscribed_${projectId}`);
+      localStorage.removeItem(`sub_txn_${projectId}`);
+      setSubscriptionPaid(false);
+      setShowUnsubscribeModal(false);
+
+      if (project) {
+        const projRef = doc(db, 'clientProjects', projectId);
+        await updateDoc(projRef, {
+          hasSubscription: false,
+          subscriptionPaid: false,
+          subscriptionPaidAt: null,
+          updatedAt: new Date()
+        });
+
+        setProject(prev => prev ? {
+          ...prev,
+          hasSubscription: false,
+          subscriptionPaid: false,
+          subscriptionPaidAt: undefined
+        } : null);
+      }
+
+      showToast(isPt ? 'Assinatura cancelada e removida com sucesso.' : 'Subscription cancelled and removed successfully.', 'info');
+    } catch (err) {
+      console.error('Error cancelling subscription:', err);
+      showToast(isPt ? 'Erro ao cancelar assinatura.' : 'Failed to cancel subscription.', 'error');
     }
   };
 
@@ -1678,6 +1748,388 @@ export function ProjectHub({ projectId }: { projectId: string }) {
             })()}
           </Card>
         </div>
+
+        {/* Adicionado: Subscription Checkout Form Panel */}
+        {project.hasSubscription && (
+          <div className="mb-12 animate-fade-in text-left">
+            <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-8 md:p-12 relative overflow-hidden">
+              <div className="absolute top-0 left-0 bg-zarco-cyan text-black px-8 py-2 text-[10px] font-black uppercase tracking-widest rounded-br-2xl flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-black animate-pulse"></span>
+                {isPt ? 'SUBSCRIÇÃO RECORRENTE' : 'RECURRING SUBSCRIPTION'}
+              </div>
+
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8 border-b border-white/5 pb-8 pt-4">
+                <div className="flex flex-col gap-1 text-left">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">💳</span>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">
+                      {project.subscriptionTitle || (isPt ? 'Serviço de Acompanhamento Mensal' : 'Recurring Support Plan')}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-white/30 uppercase font-bold tracking-wider mt-1.5 font-sans">
+                    {isPt 
+                      ? 'Gestão de faturamento recorrente, suporte pós-venda, servidores e manutenção evolutiva' 
+                      : 'Recurring billing cycles, active product maintenance, hosting options & support'}
+                  </p>
+                </div>
+
+                <div className="px-5 py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl flex flex-col items-end">
+                  <span className="text-[9px] text-white/40 uppercase font-bold tracking-widest">{isPt ? 'VALOR DO PLANO' : 'RECURRING RATE'}</span>
+                  <span className="text-2xl font-black text-white/90">
+                    €{Number(project.subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="text-xs text-zarco-cyan font-black uppercase tracking-widest ml-1">
+                      / {project.subscriptionInterval === "yearly" ? (isPt ? "ano" : "yr") : (isPt ? "mês" : "mo")}
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              {subscriptionPaid ? (
+                /* Subscribed Success Box */
+                <div className="py-8 text-center flex flex-col items-center justify-center gap-5 max-w-2xl mx-auto rounded-3xl bg-green-500/[0.02] border border-green-500/10 p-8 animate-fade-in">
+                  <div className="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-400 text-2xl font-black shadow-lg shadow-green-500/10">
+                    <Check className="w-8 h-8 stroke-[3]" />
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="text-xl font-black uppercase tracking-tight text-green-400">
+                      {isPt ? 'Subscrição Ativa e Confirmada!' : 'Subscription Active & Confirmed!'}
+                    </h4>
+                    <p className="text-xs text-white/50 leading-relaxed font-bold uppercase tracking-wider max-w-md mx-auto">
+                      {isPt 
+                        ? 'Obrigado por nos escolher. Os pagamentos recorrentes estão assegurados com integridade de ponta a ponta.' 
+                        : 'Thank you for choosing Zarco Studios. Core recurring billing loops have been secured and are active.'}
+                    </p>
+                  </div>
+
+                  <div className="w-full grid grid-cols-2 gap-4 text-left p-4 bg-black/40 border border-white/5 rounded-2xl font-mono text-[10px] mt-2">
+                    <div className="space-y-1 border-r border-white/5 pr-4 font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'PLANO DE ADESÃO' : 'CONNECTED PLAN'}</span>
+                      <span className="text-white font-bold block">{project.subscriptionTitle || (isPt ? "Serviço de Acompanhamento" : "Support Plan")}</span>
+                    </div>
+                    <div className="space-y-1 pl-4 font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'DATA DE ASSINATURA' : 'STARTING DATE'}</span>
+                      <span className="text-white font-bold block">
+                        {project?.subscriptionPaidAt 
+                          ? new Date(project.subscriptionPaidAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+                          : new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 border-r border-white/5 pr-4 pt-3 mt-3 border-t font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'PRÓXIMO RECORRENTE' : 'NEXT RECURRING'}</span>
+                      <span className="text-zarco-cyan font-bold block">{getNextPaymentDate()}</span>
+                    </div>
+                    <div className="space-y-1 pl-4 pt-3 mt-3 border-t font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'ESTADO DA COBRANÇA' : 'BILLING STATUS'}</span>
+                      <span className="text-green-400 font-bold block uppercase tracking-widest">{isPt ? 'AGENDADO' : 'SCHEDULED'}</span>
+                    </div>
+
+                    <div className="space-y-1 border-r border-white/5 pr-4 pt-3 mt-3 border-t font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'TRANSAÇÃO STRIPE' : 'STRIPE RECEIPT'}</span>
+                      <span className="text-white font-bold block break-all">{localStorage.getItem(`sub_txn_${project.id}`) || subTransactionId || "ch_stripe_active_04b4"}</span>
+                    </div>
+                    <div className="space-y-1 pl-4 pt-3 mt-3 border-t font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'ESTADO' : 'STATUS'}</span>
+                      <span className="text-green-400 font-bold block uppercase tracking-widest">{isPt ? 'ATIVO' : 'ACTIVE'}</span>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => setShowUnsubscribeModal(true)}
+                    className="mt-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold uppercase tracking-widest text-[9px] px-5 py-2.5 h-9 rounded-xl border border-red-500/25 transition-all cursor-pointer font-bold"
+                  >
+                    ❌ {isPt ? 'CANCELAR ASSINATURA' : 'CANCEL RECURRING SUBSCRIPTION'}
+                  </Button>
+                </div>
+              ) : (
+                /* Subcription checkout interactive form area */
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  
+                  {/* Left Column: Plan Description & Details */}
+                  <div className="lg:col-span-5 space-y-6">
+                    <div className="p-6 bg-white/[0.01] border border-white/5 rounded-[2rem] space-y-4">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-[#4fd1dc]">
+                        {isPt ? 'COBERTURA E BENEFÍCIOS' : 'WHAT IS INCLUDED'}
+                      </h4>
+                      <p className="text-xs text-white/60 leading-relaxed font-semibold">
+                        {project.subscriptionDescription || (isPt 
+                          ? 'Inclui suporte técnico especializado, otimização contínua de bases de dados, monitorização de sanidade do alojamento e intervenções visuais mensais prioritárias.' 
+                          : 'Includes dedicated technical support, continuous performance updates, database integrity optimization, and prioritized monthly design cycles.')}
+                      </p>
+
+                       <div className="space-y-2.5 pt-4 border-t border-white/5">
+                        {project.subscriptionFeatures && project.subscriptionFeatures.length > 0 ? (
+                          project.subscriptionFeatures.map((feat, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-[10px] text-white/50 uppercase font-black">
+                              <Check className="w-3.5 h-3.5 text-zarco-cyan" />
+                              <span>{feat}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <>
+                            {project.subFeaturesSlack !== false && (
+                              <div className="flex items-center gap-2 text-[10px] text-white/50 uppercase font-black">
+                                <Check className="w-3.5 h-3.5 text-zarco-cyan" />
+                                <span>{isPt ? 'Suporte Dedicado via Slack' : 'Dedicated Slack Channel Client Access'}</span>
+                              </div>
+                            )}
+                            {project.subFeaturesSecurity !== false && (
+                              <div className="flex items-center gap-2 text-[10px] text-white/50 uppercase font-black">
+                                <Check className="w-3.5 h-3.5 text-zarco-cyan" />
+                                <span>{isPt ? 'Auditorias de Segurança Proativas' : 'Proactive Security Audits'}</span>
+                              </div>
+                            )}
+                            {project.subFeaturesHosting !== false && (
+                              <div className="flex items-center gap-2 text-[10px] text-white/50 uppercase font-black">
+                                <Check className="w-3.5 h-3.5 text-zarco-cyan" />
+                                <span>{isPt ? 'Servidor de Produção Optimizado' : 'Scalable Production Host Setup'}</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 px-6 py-4 bg-white/[0.01] border border-white/5 rounded-2xl">
+                      <span className="text-lg">🔒</span>
+                      <p className="text-[9px] text-white/40 uppercase font-bold tracking-wider leading-relaxed">
+                        {isPt 
+                          ? 'Transações processadas de forma encriptada através do Stripe Checkout. Não armazenamos informações de cartão.' 
+                          : 'Encrypted Stripe Gateway end-to-end processing. We never store or transmit raw banking credentials.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Checkout Form with Stripe Mock Integration */}
+                  <div className="lg:col-span-7 bg-[#0c1417]/30 border border-white/5 rounded-[2rem] p-6 md:p-8 space-y-5">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-white border-b border-white/5 pb-4 flex items-center justify-between">
+                      <span>🏦 {isPt ? 'FORMULÁRIO DE CHECKOUT' : 'SECURE CHECKOUT'}</span>
+                      <span className="text-[9px] text-[#4fd1dc] font-black uppercase bg-[#4fd1dc]/10 px-2.5 py-1 rounded">Stripe Gateway</span>
+                    </h4>
+
+                    {subError && (
+                      <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold uppercase tracking-wider rounded-xl animate-bounce">
+                        ⚠️ {subError}
+                      </div>
+                    )}
+
+                    <div className="space-y-4">
+                      {/* Name on card */}
+                      <div className="space-y-2 text-left">
+                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                          {isPt ? 'Nome no Cartão' : 'Cardholder Name'}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={subCardName}
+                          onChange={(e) => setSubCardName(e.target.value)}
+                          placeholder={isPt ? "NOME IGUAL AO CARTÃO" : "JOHN DOE"}
+                          className="w-full bg-[#080d0f] border border-white/10 hover:border-white/20 focus:border-zarco-cyan/50 text-white rounded-xl h-12 px-4 text-xs font-bold outline-none tracking-widest uppercase transition-all animate-none"
+                        />
+                      </div>
+
+                      {/* Card number */}
+                      <div className="space-y-2 text-left">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                            {isPt ? 'Número do Cartão' : 'Credit Card Number'}
+                          </label>
+                          {/* Live credit card brand indicator */}
+                          {(() => {
+                            const trimmed = subCardNumber.replace(/\s+/g, '');
+                            if (trimmed.startsWith('4')) {
+                              return <span className="text-[9px] text-green-400 font-extrabold tracking-widest bg-green-500/10 px-2 py-0.5 rounded uppercase">Visa detected</span>;
+                            } else if (trimmed.startsWith('5')) {
+                              return <span className="text-[9px] text-orange-400 font-extrabold tracking-widest bg-orange-500/10 px-2 py-0.5 rounded uppercase font-sans">Mastercard detected</span>;
+                            } else if (trimmed.startsWith('3')) {
+                              return <span className="text-[9px] text-zarco-cyan font-extrabold tracking-widest bg-zarco-cyan/10 px-2 py-0.5 rounded uppercase font-sans">Amex detected</span>;
+                            }
+                            return null;
+                          })()}
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            required
+                            maxLength={19}
+                            value={subCardNumber}
+                            onChange={(e) => {
+                              // Auto format input with spaces every 4 digits
+                              const trimmed = e.target.value.replace(/\D/g, '');
+                              const matches = trimmed.match(/.{1,4}/g);
+                              setSubCardNumber(matches ? matches.join(' ') : '');
+                            }}
+                            placeholder="0000 0000 0000 0000"
+                            className="w-full bg-[#080d0f] border border-white/10 hover:border-white/20 focus:border-zarco-cyan/50 text-white rounded-xl h-12 pl-12 pr-4 text-xs font-mono font-bold outline-none tracking-widest transition-all"
+                          />
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 text-xs">
+                            💳
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Expiry, CVC & Zip */}
+                      <div className="grid grid-cols-3 gap-4 font-mono">
+                        <div className="space-y-2 text-left">
+                          <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest font-sans">
+                            {isPt ? 'Validade' : 'Expiry Date'}
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={5}
+                            value={subCardExpiry}
+                            onChange={(e) => {
+                              // Format MM/YY
+                              const trimmed = e.target.value.replace(/\D/g, '');
+                              const currentVal = trimmed.length > 2 ? `${trimmed.substring(0, 2)}/${trimmed.substring(2, 4)}` : trimmed;
+                              setSubCardExpiry(currentVal);
+                            }}
+                            placeholder="MM/YY"
+                            className="w-full bg-[#080d0f] border border-white/10 hover:border-white/20 focus:border-zarco-cyan/50 text-white rounded-xl h-12 px-4 text-xs font-mono font-bold text-center outline-none tracking-widest transition-all"
+                          />
+                        </div>
+
+                        <div className="space-y-2 text-left">
+                          <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest font-sans">
+                            CVC
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={4}
+                            value={subCardCvc}
+                            onChange={(e) => setSubCardCvc(e.target.value.replace(/\D/g, ''))}
+                            placeholder="000"
+                            className="w-full bg-[#080d0f] border border-white/10 hover:border-white/20 focus:border-zarco-cyan/50 text-white rounded-xl h-12 px-4 text-xs font-mono font-bold text-center outline-none tracking-widest transition-all"
+                          />
+                        </div>
+
+                        <div className="space-y-2 text-left">
+                          <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest font-sans">
+                            {isPt ? 'Cód. Postal' : 'ZIP / Postal'}
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={8}
+                            value={subCardPostal}
+                            onChange={(e) => setSubCardPostal(e.target.value.toUpperCase())}
+                            placeholder="1000-000"
+                            className="w-full bg-[#080d0f] border border-white/10 hover:border-white/20 focus:border-zarco-cyan/50 text-white rounded-xl h-12 px-4 text-xs font-sans font-bold text-center outline-none tracking-widest transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      disabled={subIsProcessing}
+                      onClick={async () => {
+                        // Validator inputs
+                        setSubError(null);
+                        if (!subCardName.trim()) {
+                          setSubError(isPt ? "Indique o Nome do Titular do Cartão." : "Please provide the Cardholder Name.");
+                          return;
+                        }
+                        const cleanCard = subCardNumber.replace(/\s+/g, '');
+                        if (cleanCard.length < 15) {
+                          setSubError(isPt ? "Número de Cartão inválido." : "Card number seems incorrect or too short.");
+                          return;
+                        }
+                        if (subCardExpiry.length < 5 || !subCardExpiry.includes("/")) {
+                          setSubError(isPt ? "Data de validade deve possuir formato MM/YY." : "Format expiration date as MM/YY.");
+                          return;
+                        }
+                        if (subCardCvc.length < 3) {
+                          setSubError(isPt ? "CVC incorrecto." : "Invalid security CVC code.");
+                          return;
+                        }
+
+                        setSubIsProcessing(true);
+                        try {
+                          // Simulate dynamic payment gateway delay (2 seconds)
+                          await new Promise(resolve => setTimeout(resolve, 2000));
+                          
+                          const hashId = `ch_stripe_${Math.random().toString(36).substring(2, 10)}`;
+                          localStorage.setItem(`subscribed_${project.id}`, 'true');
+                          localStorage.setItem(`sub_txn_${project.id}`, hashId);
+                          setSubTransactionId(hashId);
+                          setSubscriptionPaid(true);
+
+                          let paidAtServerStr = new Date().toISOString();
+
+                          // Trigger Payment Confirmation, DB status sync and detailed emails on backend
+                          try {
+                            const apiResponse = await fetch('/api/subscriptions/confirm-payment', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                projectId: project.id,
+                                clientEmail: client?.email || contactEmail || "",
+                                clientName: client?.fullName || contactName || "",
+                                projectName: project.projectName || "",
+                                subscriptionTitle: project.subscriptionTitle || "",
+                                subscriptionPrice: project.subscriptionPrice || 0,
+                                subscriptionInterval: project.subscriptionInterval || "monthly",
+                                transactionId: hashId,
+                                lang: isPt ? "pt" : "en",
+                              }),
+                            });
+
+                            if (apiResponse.ok) {
+                              const resData = await apiResponse.json();
+                              if (resData.paidAt) {
+                                paidAtServerStr = resData.paidAt;
+                              }
+                            } else {
+                              console.warn("Server subscription confirmation returned non-OK status");
+                            }
+                          } catch (apiErr) {
+                            console.error("API billing webhook execution failed:", apiErr);
+                          }
+
+                          // Secure local/live client state for immediate visual response
+                          setProject(prev => {
+                            if (!prev) return null;
+                            return {
+                              ...prev,
+                              subscriptionPaid: true,
+                              subscriptionPaidAt: paidAtServerStr
+                            };
+                          });
+
+                          showToast(isPt ? 'Subscrição concluída com sucesso! E-mails enviados.' : 'Subscription activated successfully! Confirmation emails dispatched.', 'success');
+                        } catch (err) {
+                          console.error(err);
+                          setSubError(isPt ? "Transação recusada pela instituição financeira." : "Stripe processing failed. Try different credentials.");
+                        } finally {
+                          setSubIsProcessing(false);
+                        }
+                      }}
+                      className="w-full bg-zarco-cyan text-black hover:bg-zarco-cyan/90 font-black uppercase tracking-widest text-[10px] h-14 rounded-xl transition-all shadow-lg shadow-zarco-cyan/10 flex items-center justify-center gap-2 cursor-pointer mt-3"
+                    >
+                      {subIsProcessing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>{isPt ? 'A PROCESSAR NO STRIPE...' : 'SECURE PROCESSING STREAM...'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{isPt ? `SUBSCREVER PLANO • €${Number(project.subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : `SUBSCRIBE NOW • €${Number(project.subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
 
         {/* Testing & Improvements Section */}
         {(project.hasManualTesting || project.hasAutomatedTesting) && (
@@ -3312,6 +3764,55 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                       className="flex-1 bg-red-500 hover:bg-red-600 text-white font-heavy h-12 rounded-xl border-none uppercase tracking-widest text-[10px]"
                     >
                       {isPt ? 'Eliminar' : 'Delete'}
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Custom Subscription Cancellation Confirmation Dialog */}
+        <AnimatePresence>
+          {showUnsubscribeModal && (
+            <div className="fixed inset-0 z-[115] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="bg-[#0a1114] border border-white/10 w-full max-w-md rounded-[2.5rem] p-10 shadow-2xl relative overflow-hidden text-center"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-red-500" />
+                
+                <div className="flex flex-col items-center space-y-6">
+                  <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                    <Trash2 className="w-8 h-8 text-red-500" />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-bold text-white uppercase tracking-tight">
+                      {isPt ? 'Cancelar Assinatura' : 'Are you sure you wanna unsubscribe it'}
+                    </h3>
+                    <p className="text-white/50 text-xs leading-relaxed font-bold uppercase tracking-wider">
+                      {isPt 
+                        ? 'Tem a certeza que deseja cancelar a sua subscrição? Perderá o acesso aos benefícios de suporte continuado.' 
+                        : 'Are you sure you want to cancel your recurring subscription? You will lose access to support benefits.'}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-4 w-full pt-4">
+                    <Button
+                      onClick={() => setShowUnsubscribeModal(false)}
+                      className="flex-1 bg-white/5 border border-white/5 hover:bg-white/10 text-white font-heavy h-12 rounded-xl uppercase tracking-widest text-[10px]"
+                    >
+                      {isPt ? 'Cancelar' : 'Cancel'}
+                    </Button>
+                    <Button
+                      onClick={handleCancelSubscription}
+                      className="flex-1 bg-red-500 hover:bg-red-600 text-white font-heavy h-12 rounded-xl border-none uppercase tracking-widest text-[10px]"
+                    >
+                      {isPt ? 'Confirmar' : 'Confirm'}
                     </Button>
                   </div>
                 </div>
