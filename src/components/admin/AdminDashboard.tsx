@@ -79,33 +79,40 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 const INDUSTRIES = [
-  "Luxury Tech",
-  "Real Estate",
-  "E-commerce",
-  "Hospitality",
-  "Healthcare",
-  "Financial Services",
+  "Information & Communication",
+  "Professional Services",
+  "Wholesale & Retail Trade",
+  "Manufacturing",
+  "Construction & Real Estate",
+  "Accommodation & Food Services",
+  "Arts, Entertainment & Recreation",
   "Education",
-  "Creative Agency",
-  "Legal",
-  "Construction",
-  "Fashion & Retail",
-  "Automotive",
-  "Other",
+  "Human Health & Social Work",
+  "Financial & Insurance Activities",
+  "Transportation & Storage",
+  "Agriculture, Forestry & Fishing",
+  "Energy & Utilities",
+  "Other Services"
 ];
 
 const BUSINESS_TYPES = [
-  "LLC",
-  "Corporation",
+  "Sole Trader (Sole Proprietorship)",
+  "Self-Employed Professional",
   "Partnership",
-  "Sole Proprietorship",
-  "B2B",
-  "B2C",
-  "SaaS",
-  "Service-based",
-  "Retail",
-  "Non-profit",
-  "Other",
+  "Limited Liability Company (Ltd, Lda, GmbH, SARL, SRL, BV, etc.)",
+  "Public Limited Company (PLC, SA, AG, NV, etc.)",
+  "Cooperative",
+  "Non-Profit Organization (NPO)",
+  "Association",
+  "Foundation",
+  "Government Entity",
+  "Educational Institution",
+  "Branch Office",
+  "Holding Company",
+  "Startup",
+  "SME (Small and Medium-sized Enterprise)",
+  "Large Enterprise",
+  "Company SA"
 ];
 
 const PROJECT_STATUSES = [
@@ -180,6 +187,17 @@ const INFRASTRUCTURE_PROVIDERS = [
   "Other",
 ];
 const PAID_STATUSES = ["Paid", "Pending", "Deposit", "Proposal"];
+
+const normalizeStatus = (statusStr: string | undefined): string => {
+  const s = (statusStr || "").toUpperCase();
+  if (s === "DRAFT") return "DRAFT";
+  if (s === "SENT" || s === "PENDING") return "PENDING";
+  if (s === "PAID") return "PAID";
+  if (s === "OVERDUE" || s === "UNPAID") return "UNPAID";
+  if (s === "CANCELLED" || s === "VOID") return "VOID";
+  if (s === "DUPLICATE") return "DUPLICATE";
+  return s || "DRAFT";
+};
 
 interface Project {
   id: string;
@@ -400,6 +418,7 @@ interface Invoice {
   showClientVat?: boolean;
   showClientName?: boolean;
   showClientCompany?: boolean;
+  notes?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -503,6 +522,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     message: string;
   }
   const [adminToasts, setAdminToasts] = useState<AdminToast[]>([]);
+  const [hasShownExpiringToast, setHasShownExpiringToast] = useState(false);
 
   const showAdminToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
     const id = 'toast-' + Math.random().toString(36).substring(2, 9);
@@ -809,6 +829,42 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     return "text-yellow-500 font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20 uppercase tracking-tighter font-black";
   };
 
+  const isAssetExpiringSoon = (expirationDate: string | undefined, isFree: boolean | string | undefined, showExp: boolean | string | undefined) => {
+    if (!expirationDate) return false;
+    
+    const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
+    const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
+    
+    if (isFreeBool && !showExpBool) return false;
+
+    const exp = new Date(expirationDate);
+    if (isNaN(exp.getTime())) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const diffTime = exp.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    // Expiring within 30 days (less than one month). Counts expired too.
+    return diffDays <= 30;
+  };
+
+  const getProjectExpiringAssetsCount = (proj: ClientProject) => {
+    let count = 0;
+    if (proj.domainName && isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)) {
+      count++;
+    }
+    if (proj.hosts) {
+      proj.hosts.forEach((h) => {
+        if (h.domainName && isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)) {
+          count++;
+        }
+      });
+    }
+    return count;
+  };
+
   useEffect(() => {
     let unsubscribeSettings: (() => void) | undefined;
     const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -1010,6 +1066,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       setSubscribers(prev => prev.map(s => 
         (s.email === email && s.lang === lang) ? { ...s, active: newStatus } : s
       ));
+      showAdminToast(`Subscriber subscriber status updated to ${newStatus ? 'Active' : 'Inactive'}!`, "success");
     } catch (error) {
       console.error("Error toggling status:", error);
       handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${email}`);
@@ -1022,6 +1079,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     try {
       await deleteDoc(doc(db, collectionName, id));
       setSubscribers(prev => prev.filter(s => !(s.id === id && s.lang === lang)));
+      showAdminToast("Subscriber deleted successfully!", "success");
     } catch (error) {
       console.error("Error deleting subscriber:", error);
       handleFirestoreError(error, OperationType.DELETE, `${collectionName}/${id}`);
@@ -1033,7 +1091,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   async function saveNewsletter(isSent = false) {
     if (!newsletterForm.subject || !newsletterForm.content) {
-      alert("Please fill in the newsletter content before saving.");
+      showAdminToast("Please fill in the newsletter content before saving.", "warning");
       return;
     }
 
@@ -1099,6 +1157,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     try {
       await deleteDoc(doc(db, "newsletters", id));
       setArchivedNewsletters(prev => prev.filter(n => n.id !== id));
+      showAdminToast("Newsletter archived campaign deleted successfully!", "success");
     } catch (error) {
       console.error("Error deleting newsletter archive:", error);
       handleFirestoreError(error, OperationType.DELETE, `newsletters/${id}`);
@@ -1256,7 +1315,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       setCompanySettings(prev => ({ ...prev, logoUrl: url }));
     } catch (error: any) {
       console.error("Error uploading logo:", error);
-      alert(`Upload failed: ${error.message || "Unknown error"}`);
+      showAdminToast(`Upload failed: ${error.message || "Unknown error"}`, "error");
     } finally {
       setUploading(null);
       // Clear the input value so the same file can be uploaded again
@@ -1289,7 +1348,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       }
     } catch (error: any) {
       console.error("Error uploading QR code:", error);
-      alert(`Upload failed: ${error.message || "Unknown error"}`);
+      showAdminToast(`Upload failed: ${error.message || "Unknown error"}`, "error");
     } finally {
       setUploading(null);
       // Clear the input value so the same file can be uploaded again
@@ -1466,7 +1525,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         updatedAt: serverTimestamp(),
       });
       setPricingSettings(newSettings);
-    } catch (error) {
+      showAdminToast("Pricing settings saved successfully!", "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to save pricing settings: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.WRITE, "settings/pricing");
     }
   }
@@ -1477,8 +1538,10 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showSection: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setNewsletterSettings({ showSection: !currentStatus });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, "settings/newsletter");
+      showAdminToast(`Newsletter visibility ${!currentStatus ? "enabled" : "disabled"} successfully!`, "success");
+    } catch (errorBy: any) {
+      showAdminToast(`Failed to toggling newsletter visibility: ${errorBy.message || errorBy}`, "error");
+      handleFirestoreError(errorBy, OperationType.UPDATE, "settings/newsletter");
     }
   }
 
@@ -1488,7 +1551,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showWhatsappButton: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setCompanySettings(prev => ({ ...prev, showWhatsappButton: !currentStatus }));
-    } catch (error) {
+      showAdminToast(`WhatsApp WhatsApp button ${!currentStatus ? "enabled" : "disabled"} successfully!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle WhatsApp button: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
     }
   }
@@ -1499,7 +1564,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { showTrustWidget: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setCompanySettings(prev => ({ ...prev, showTrustWidget: !currentStatus }));
-    } catch (error) {
+      showAdminToast(`Trust widget ${!currentStatus ? "enabled" : "disabled"} successfully!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle Trust widget: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/company-legal");
     }
   }
@@ -1524,7 +1591,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       console.log("Updating local state for deleted plan:", id);
       setPricingPlans((prev) => prev.filter((p) => p.id !== id));
       setPlanConfirmingDelete(null);
-      alert("Plan deleted successfully");
+      showAdminToast("Plan deleted successfully", "success");
     } catch (error) {
       console.error("Delete error for plan:", id, error);
       handleFirestoreError(error, OperationType.DELETE, `pricing/${id}`);
@@ -1545,7 +1612,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         updatedAt: serverTimestamp(),
       });
 
-      alert("Plan saved successfully!");
+      showAdminToast("Plan saved successfully!", "success");
       fetchPricing();
       setView("pricing-list");
       setEditingPlan(null);
@@ -1622,7 +1689,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         fetchInvoices();
       }
       
-      alert("Item restored successfully!");
+      showAdminToast("Item restored successfully!", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `restore/${item.originalCollection}/${item.originalId}`);
     }
@@ -1633,7 +1700,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       await deleteDoc(doc(db, "trash", id));
       setTrashItems(prev => prev.filter(t => t.id !== id));
       setTrashConfirmingDelete(null);
-      alert("Item permanently deleted!");
+      showAdminToast("Item permanently deleted!", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `trash/${id}`);
     }
@@ -1694,7 +1761,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        alert("Client onboarded successfully!");
+        showAdminToast("Client onboarded successfully!", "success");
       } else {
         // Update existing client
         const clientData = { ...editingClient };
@@ -1707,7 +1774,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           ...clientData,
           updatedAt: serverTimestamp(),
         });
-        alert("Profile updated successfully!");
+        showAdminToast("Profile updated successfully!", "success");
       }
 
       await fetchClients();
@@ -1744,7 +1811,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       await deleteDoc(doc(db, "clients", id));
       setClients((prev) => prev.filter((c) => c.id !== id));
       setClientConfirmingDelete(null);
-      alert("Client moved to Trash Bin");
+      showAdminToast("Client moved to Trash Bin", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `clients/${id}`);
     }
@@ -2105,6 +2172,76 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     setView("billing-form");
   };
 
+  const handleGenerateInvoiceFromSubscription = (project: ClientProject) => {
+    let nextInvoiceNumber = "";
+    
+    if (companySettings.autoGenerateInvoices !== false) {
+      const currentYear = new Date().getFullYear();
+      const prefix = `${(companySettings.invoicePrefix || "INV").trim()}-${currentYear}-`;
+      
+      // Calculate next available sequence number
+      let nextNum = Number(companySettings.nextInvoiceNumber) || 1;
+      
+      // Look for the highest sequence number among existing invoices with this prefix
+      const matches = invoices
+        .filter(inv => inv.invoiceNumber && inv.invoiceNumber.startsWith(prefix))
+        .map(inv => {
+          const numMatch = inv.invoiceNumber.match(/(\d+)$/);
+          return numMatch ? parseInt(numMatch[1], 10) : 0;
+        });
+
+      if (matches.length > 0) {
+        const maxSeq = Math.max(...matches);
+        if (maxSeq >= nextNum) {
+          nextNum = maxSeq + 1;
+        }
+      }
+      
+      nextInvoiceNumber = `${prefix}${nextNum.toString().padStart(4, "0")}`;
+    }
+
+    const price = Number(project.subscriptionPrice || 0);
+    const intervalStr = project.subscriptionInterval === "yearly" ? "Yearly Support" : "Monthly Support";
+    const subtotal = price;
+    const amount = price;
+
+    const allItems: InvoiceItem[] = [{
+      description: `${project.subscriptionTitle || "Recurring Subscription"} (${intervalStr})`,
+      details: `Project: ${project.projectName}`,
+      quantity: 1,
+      unitPrice: price,
+      total: price,
+    }];
+
+    setEditingInvoice({
+      id: `invoice-temp-${Date.now()}`,
+      clientId: project.clientId || "",
+      projectId: project.id || "",
+      invoiceNumber: nextInvoiceNumber,
+      subtotal,
+      vatRate: 0,
+      vatAmount: 0,
+      discountRate: 0,
+      discountAmount: 0,
+      amount,
+      currency: "EUR",
+      status: "Draft",
+      issueDate: new Date().toISOString().split("T")[0],
+      dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0],
+      description: `Subscription billing cycle for ${project.projectName} (${project.subscriptionTitle || "Support Plan"})`,
+      details: "",
+      items: allItems,
+      applyVat: false,
+      applyDiscount: false,
+      showClientVat: true,
+      showClientName: true,
+      showClientCompany: true,
+    });
+    setView("billing-form");
+  };
+
   const handleEditInvoice = (invoice: Invoice) => {
     setEditingInvoice(invoice);
     setView("billing-form");
@@ -2149,14 +2286,17 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           { ...editingInvoice, id: docRef.id, createdAt: new Date() },
           ...prev,
         ]);
+        showAdminToast("Invoice/Bill created successfully!", "success");
       } else {
         await setDoc(doc(db, "invoices", id), invoiceData, { merge: true });
         setInvoices(
           invoices.map((inv) => (inv.id === id ? editingInvoice : inv)),
         );
+        showAdminToast("Invoice/Bill updated successfully!", "success");
       }
       setView("billing-list");
-    } catch (error) {
+    } catch (error: any) {
+      showAdminToast(`Failed to save Invoice/Bill: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.WRITE, "invoices");
     } finally {
       setSavingInvoice(false);
@@ -2180,7 +2320,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       await deleteDoc(doc(db, "invoices", id));
       setInvoices(invoices.filter((inv) => inv.id !== id));
       setInvoiceConfirmingDelete(null);
-      alert("Invoice/Bill moved to Trash Bin");
+      showAdminToast("Invoice/Bill moved to Trash Bin", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `invoices/${id}`);
     }
@@ -2193,8 +2333,20 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [analyticsMonth, setAnalyticsMonth] = useState<string>("All");
 
   const handleGeneratePDF = async (invoice: Invoice) => {
-    const status = pdfStates[invoice.id] || "";
+    let status = pdfStates[invoice.id];
+    if (status === undefined) {
+      status = normalizeStatus(invoice.status);
+    }
+    if (status === "DRAFT") {
+      status = "";
+    }
     const lang = pdfLangs[invoice.id] || "en";
+
+    const formatPrice = (val: number) => {
+      const formatted = Number(val).toFixed(2);
+      const isEur = invoice.currency === "EUR" || !invoice.currency;
+      return isEur ? `${formatted}€` : `${formatted} ${invoice.currency}`;
+    };
 
     // Helper to load images for PDF
     const loadImage = (url: string): Promise<HTMLImageElement> => {
@@ -2435,7 +2587,12 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`${t.issueDate} ${invoice.issueDate}`, clientX, metaY + 5);
-    doc.text(`${t.dueDate} ${invoice.dueDate}`, clientX, metaY + 10);
+    
+    // Only add due date if invoice is not paid
+    const isPaid = status === "PAID" || normalizeStatus(invoice.status) === "PAID";
+    if (!isPaid) {
+      doc.text(`${t.dueDate} ${invoice.dueDate}`, clientX, metaY + 10);
+    }
 
     // 5. Items Table
     autoTable(doc, {
@@ -2448,8 +2605,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         return [
           desc,
           item.quantity,
-          `${invoice.currency} ${(item.unitPrice || 0).toLocaleString()}`,
-          `${invoice.currency} ${(item.total || 0).toLocaleString()}`,
+          formatPrice(item.unitPrice || 0),
+          formatPrice(item.total || 0),
         ];
       }),
       headStyles: { fillColor: [79, 209, 220], textColor: [0, 0, 0], fontStyle: "bold" },
@@ -2470,20 +2627,38 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     // 6. Summary
     let currentY = (doc as any).lastAutoTable.finalY + 10;
     const summaryX = pageWidth - 20;
+
+    // Notes block (Left Side) - displayed beautifully before payment info
+    if (invoice.notes && invoice.notes.trim()) {
+      doc.saveGraphicsState();
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(140);
+      const notesLabel = lang === "pt" ? "NOTAS / CONDIÇÕES:" : "NOTES / TERMS:";
+      doc.text(notesLabel, 20, currentY);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(80);
+      const notesLines = doc.splitTextToSize(invoice.notes, 100);
+      doc.text(notesLines, 20, currentY + 5);
+      doc.restoreGraphicsState();
+    }
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     
     doc.setTextColor(100);
     doc.text(t.subtotal, summaryX - 50, currentY);
     doc.setTextColor(0);
-    doc.text(`${invoice.currency} ${(invoice.subtotal || invoice.amount).toLocaleString()}`, summaryX, currentY, { align: 'right' });
+    doc.text(formatPrice(invoice.subtotal || invoice.amount), summaryX, currentY, { align: 'right' });
     
     if (invoice.applyDiscount) {
       currentY += 7;
       doc.setTextColor(100);
       doc.text(`${t.discount} (${invoice.discountRate}%):`, summaryX - 50, currentY);
       doc.setTextColor(0);
-      doc.text(`- ${invoice.currency} ${(invoice.discountAmount || 0).toLocaleString()}`, summaryX, currentY, { align: 'right' });
+      doc.text(`- ${formatPrice(invoice.discountAmount || 0)}`, summaryX, currentY, { align: 'right' });
     }
     
     if (invoice.applyVat) {
@@ -2491,7 +2666,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       doc.setTextColor(100);
       doc.text(`${t.vat} (${invoice.vatRate}%):`, summaryX - 50, currentY);
       doc.setTextColor(0);
-      doc.text(`+ ${invoice.currency} ${(invoice.vatAmount || 0).toLocaleString()}`, summaryX, currentY, { align: 'right' });
+      doc.text(`+ ${formatPrice(invoice.vatAmount || 0)}`, summaryX, currentY, { align: 'right' });
     }
     
     currentY += 12;
@@ -2503,7 +2678,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     currentY += 8; // THE GAP
     doc.setFontSize(18);
     doc.setTextColor(79, 209, 220);
-    doc.text(`${invoice.currency} ${(invoice.amount || 0).toLocaleString()}`, summaryX, currentY, { align: 'right' });
+    doc.text(formatPrice(invoice.amount || 0), summaryX, currentY, { align: 'right' });
 
     // 6.5. Payment Information (Bottom)
     if (companySettings.showBankDetails || companySettings.showRevolutDetails || (companySettings.customPayments && companySettings.customPayments.some(p => p.show))) {
@@ -2634,8 +2809,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       if (status === "PENDING") color = [79, 209, 220]; // Cyan
       if (status === "DUPLICATE") color = [168, 85, 247]; // Purple
 
-      // Positioned next to payment methods at bottom right
-      drawStamp((st as any)[status] || status, pageWidth - 70, pageHeight - 45, color);
+      // Positioned next to payment methods at bottom right (pushed up and left)
+      drawStamp((st as any)[status] || status, pageWidth - 90, pageHeight - 65, color);
     }
 
     doc.save(`${invoice.invoiceNumber}.pdf`);
@@ -2806,18 +2981,19 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        alert("Internal project created successfully!");
+        showAdminToast("Internal project created successfully!", "success");
       } else {
         await updateDoc(doc(db, "clientProjects", projectId), {
           ...projectData,
           updatedAt: serverTimestamp(),
         });
-        alert("Internal project updated successfully!");
+        showAdminToast("Internal project updated successfully!", "success");
       }
 
       await fetchClientProjects();
       setView("managed-projects-list");
-    } catch (error) {
+    } catch (error: any) {
+      showAdminToast(`Failed to save project: ${error.message || error}`, "error");
       handleFirestoreError(
         error,
         editingClientProject.id.startsWith("client-proj-temp-")
@@ -2832,7 +3008,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   async function handleFileUpload(file: File, type: "main" | "gallery") {
     if (!auth.currentUser) {
-      alert("You must be logged in to upload files");
+      showAdminToast("You must be logged in to upload files", "error");
       return;
     }
 
@@ -2875,10 +3051,10 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       } else {
         setFormData((prev) => ({ ...prev, gallery: [...prev.gallery, url] }));
       }
-      alert("Upload successful!");
+      showAdminToast("Upload successful!", "success");
     } catch (error: any) {
       console.error("Upload Error:", error);
-      alert("Upload error: " + error.message);
+      showAdminToast("Upload error: " + error.message, "error");
     } finally {
       setUploading(null);
     }
@@ -2950,11 +3126,12 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           ),
         );
       }
-      alert("Project saved successfully!");
+      showAdminToast("Project saved successfully!", "success");
       resetForm();
       setView("portfolio-list");
     } catch (error: any) {
       console.error("Save error:", error);
+      showAdminToast(`Failed to save project: ${error.message || error}`, "error");
       handleFirestoreError(
         error,
         view === "create" ? OperationType.CREATE : OperationType.UPDATE,
@@ -2987,7 +3164,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       }
       setView("reviews-list");
       setEditingReview(null);
-    } catch (error) {
+      showAdminToast(editingReview ? "Review updated successfully!" : "Review saved successfully!", "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to save review: ${error.message || error}`, "error");
       handleFirestoreError(error, editingReview ? OperationType.UPDATE : OperationType.CREATE, "reviews");
     } finally {
       setSavingReview(false);
@@ -2999,7 +3178,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       await deleteDoc(doc(db, "reviews", id));
       setReviews(prev => prev.filter(r => r.id !== id));
       setReviewConfirmingDelete(null);
-    } catch (error) {
+      showAdminToast("Review deleted successfully!", "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to delete review: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.DELETE, `reviews/${id}`);
     }
   }
@@ -3008,7 +3189,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     try {
       await updateDoc(doc(db, "reviews", id), { show: !currentStatus });
       setReviews(prev => prev.map(r => r.id === id ? { ...r, show: !currentStatus } : r));
-    } catch (error) {
+      showAdminToast(`Review visibility updated to ${!currentStatus ? 'Visible' : 'Hidden'}!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to update review visibility: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, `reviews/${id}`);
     }
   }
@@ -3019,7 +3202,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { ...testimonialsSettings, showSection: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setTestimonialsSettings(prev => ({ ...prev, showSection: !currentStatus }));
-    } catch (error) {
+      showAdminToast(`Testimonials section ${!currentStatus ? 'enabled' : 'disabled'} successfully!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle testimonials section: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/testimonials");
     }
   }
@@ -3030,7 +3215,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { ...pricingSettings, showSection: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setPricingSettings(prev => ({ ...prev, showSection: !currentStatus }));
-    } catch (error) {
+      showAdminToast(`Pricing section ${!currentStatus ? 'enabled' : 'disabled'} successfully!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle pricing section: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/pricing");
     }
   }
@@ -3041,7 +3228,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { ...newsletterSettings, showSection: !currentStatus, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setNewsletterSettings(prev => ({ ...prev, showSection: !currentStatus }));
-    } catch (error) {
+      showAdminToast(`Newsletter section ${!currentStatus ? 'enabled' : 'disabled'} successfully!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle newsletter section: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/newsletter");
     }
   }
@@ -3053,7 +3242,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const newData = { ...testimonialsSettings, displayMode: newMode, updatedAt: serverTimestamp() };
       await setDoc(docRef, newData, { merge: true });
       setTestimonialsSettings(prev => ({ ...prev, displayMode: newMode }));
-    } catch (error) {
+      showAdminToast(`Testimonials display layout changed to ${newMode}!`, "success");
+    } catch (error: any) {
+      showAdminToast(`Failed to toggle display mode: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, "settings/testimonials");
     }
   }
@@ -3106,7 +3297,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       await deleteDoc(doc(db, "projects", id));
       setProjects(projects.filter((p) => p.id !== id));
       setProjectConfirmingDelete(null);
-      alert("Portfolio project moved to Trash Bin");
+      showAdminToast("Portfolio project moved to Trash Bin", "success");
     } catch (error: any) {
       handleFirestoreError(error, OperationType.DELETE, `projects/${id}`);
     }
@@ -3130,7 +3321,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       setClientProjects((prev) => prev.filter((p) => p.id !== id));
       setClientProjectConfirmingDelete(null);
       fetchClientProjects();
-      alert("Client project moved to Trash Bin");
+      showAdminToast("Client project moved to Trash Bin", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `clientProjects/${id}`);
     }
@@ -3149,7 +3340,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       setProjects(
         projects.map((p) => (p.id === id ? { ...p, [field]: !currentVal } : p)),
       );
+      showAdminToast(`Project status updated successfully!`, "success");
     } catch (error: any) {
+      showAdminToast(`Failed to update project status: ${error.message || error}`, "error");
       handleFirestoreError(error, OperationType.UPDATE, `projects/${id}`);
     }
   }
@@ -3186,9 +3379,77 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     (proj.feedbacksList || []).map(fb => ({ ...fb, project: proj }))
   ).filter(fb => !seenFeedbackIds.includes(fb.id));
 
+  // Find all assets/domains expiring within 30 days
+  const expiringAssets = clientProjects.flatMap(proj => {
+    const list: {
+      projectId: string;
+      projectName: string;
+      assetName: string;
+      provider: string;
+      expirationDate: string;
+      isHost: boolean;
+      daysRemaining: number;
+    }[] = [];
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const checkExpiring = (name: string, expDate: string, isFree: boolean | string | undefined, showExp?: boolean | string | undefined, isHost = false) => {
+      if (!expDate) return;
+      
+      const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
+      const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
+      
+      if (isFreeBool && !showExpBool) return;
+
+      const exp = new Date(expDate);
+      if (isNaN(exp.getTime())) return;
+
+      const diffTime = exp.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays <= 30) {
+        list.push({
+          projectId: proj.id,
+          projectName: proj.projectName,
+          assetName: name || "Custom Domain",
+          provider: (isHost ? "" : proj.domainProvider) || "Unknown Provider",
+          expirationDate: expDate,
+          isHost,
+          daysRemaining: diffDays,
+        });
+      }
+    };
+
+    if (proj.domainName) {
+      checkExpiring(proj.domainName, proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration, false);
+    }
+
+    if (proj.hosts) {
+      proj.hosts.forEach((h) => {
+        if (h.domainName) {
+          checkExpiring(h.domainName, h.domainExpiration, h.isHostingFree, h.showDomainExpiration, true);
+        }
+      });
+    }
+
+    return list;
+  });
+
   const newReviewsCount = unreadReviews.length;
   const newFeedbackCount = unreadFeedbacks.length;
-  const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0;
+  const expiringAssetsCount = expiringAssets.length;
+  const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0 || expiringAssetsCount > 0;
+
+  useEffect(() => {
+    if (!loadingClientProjects && clientProjects.length > 0 && expiringAssets.length > 0 && !hasShownExpiringToast) {
+      showAdminToast(
+        `Alert: You have ${expiringAssets.length} managed domain renewal(s) expiring within 1 month! Check 'Attention Required' or 'Projects'.`,
+        "warning"
+      );
+      setHasShownExpiringToast(true);
+    }
+  }, [loadingClientProjects, clientProjects.length, expiringAssets.length, hasShownExpiringToast]);
 
   const filteredProjects = projects.filter((project) => {
     if (!adminProjectSearch.trim()) return true;
@@ -3337,10 +3598,16 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         <nav className="flex-1 space-y-2 w-full">
           <button
             onClick={() => { setView("list"); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all max-[900px]:gap-0 max-[900px]:justify-center ${isSidebarOpen ? 'max-[900px]:gap-3 max-[900px]:px-4 max-[900px]:justify-start' : 'max-[900px]:px-0'} ${view === "list" ? "bg-white/5 text-zarco-cyan shadow-sm border border-white/5" : "text-white/40 hover:text-white hover:bg-white/5"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all relative max-[900px]:gap-0 max-[900px]:justify-center ${isSidebarOpen ? 'max-[900px]:gap-3 max-[900px]:px-4 max-[900px]:justify-start' : 'max-[900px]:px-0'} ${view === "list" ? "bg-white/5 text-zarco-cyan shadow-sm border border-white/5" : "text-white/40 hover:text-white hover:bg-white/5"}`}
           >
             <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
             <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Dashboard</span>
+            {hasAlerts && (
+              <span className={`ml-auto relative ${isSidebarOpen ? 'flex h-2.5 w-2.5' : 'max-[900px]:absolute max-[900px]:top-1 max-[900px]:right-1 flex h-2 w-2'}`}>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-full w-full bg-red-500"></span>
+              </span>
+            )}
           </button>
           <button
             onClick={() => { setView("portfolio-list"); setIsSidebarOpen(false); }}
@@ -3355,7 +3622,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           >
             <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
             <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Projects</span>
-            {newFeedbackCount > 0 && (
+            {(newFeedbackCount > 0 || expiringAssetsCount > 0) && (
               <span className={`ml-auto relative ${isSidebarOpen ? 'flex h-2.5 w-2.5' : 'max-[900px]:absolute max-[900px]:top-1 max-[900px]:right-1 flex h-2 w-2'}`}>
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-full w-full bg-red-500"></span>
@@ -3503,7 +3770,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
                     </span>
                     <h2 className="text-lg font-black uppercase tracking-wider text-white">
-                      Attention Required ({newReviewsCount + newFeedbackCount} New Alerts)
+                      Attention Required ({newReviewsCount + newFeedbackCount + expiringAssetsCount} New Alerts)
                     </h2>
                   </div>
                   <div className="flex gap-2">
@@ -3620,6 +3887,60 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                             </div>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Expiring Domains/Assets segment */}
+                  {expiringAssets.length > 0 && (
+                    <div className="space-y-3 col-span-1 lg:col-span-2 border-t border-white/[0.05] pt-6 first:border-0 first:pt-0">
+                      <div className="text-[10px] uppercase font-black tracking-widest text-[#ef4444] flex items-center gap-2">
+                        <Globe className="w-3.5 h-3.5 animate-pulse text-red-500" />
+                        Expiring Managed Assets / Domains ({expiringAssets.length})
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                        {expiringAssets.map((asset, idx) => {
+                          const proj = clientProjects.find(p => p.id === asset.projectId);
+                          return (
+                            <div key={idx} className="p-4 rounded-2xl bg-[#0a1114]/80 border border-red-500/10 hover:border-red-500/25 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                              <div className="text-left flex items-start gap-2.5">
+                                <span className="flex h-2 w-2 relative mt-1 flex-shrink-0">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                                </span>
+                                <div className="text-left">
+                                  <span className="text-xs font-bold text-white block uppercase tracking-wider text-left max-w-[200px] truncate" title={asset.assetName}>
+                                    {asset.assetName}
+                                  </span>
+                                  <span className="text-[9px] font-mono text-white/50 block mt-0.5 uppercase tracking-widest text-left">
+                                    Project: {asset.projectName}
+                                  </span>
+                                  <span className={`text-[10px] font-bold block mt-1 uppercase ${asset.daysRemaining <= 0 ? 'text-red-500 font-black' : asset.daysRemaining <= 7 ? 'text-red-400' : 'text-yellow-500'}`}>
+                                    {asset.daysRemaining < 0 
+                                      ? `Expired ${Math.abs(asset.daysRemaining)} Days Ago!` 
+                                      : asset.daysRemaining === 0 
+                                        ? "Expires Today!" 
+                                        : `Expires in ${asset.daysRemaining} Days (${new Date(asset.expirationDate).toLocaleDateString()})`}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (proj) {
+                                      setEditingClientProject(proj);
+                                      setView("client-project-form");
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-red-500/15 text-red-400 border border-red-500/25 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
+                                >
+                                  Manage Asset
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -4050,6 +4371,14 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                               className="w-full py-2.5 h-10 bg-white/5 hover:bg-white/10 text-white/80 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/5"
                             >
                               Edit Settings
+                            </Button>
+
+                            <Button
+                              onClick={() => handleGenerateInvoiceFromSubscription(proj)}
+                              className="w-full py-2.5 h-10 bg-zarco-cyan/10 hover:bg-zarco-cyan/20 text-zarco-cyan rounded-xl text-[9px] font-black uppercase tracking-widest border border-zarco-cyan/20 flex items-center justify-center gap-1.5 transition-all"
+                            >
+                              <CreditCard className="w-4 h-4" />
+                              Create Bill
                             </Button>
 
                             <Button
@@ -4764,6 +5093,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
             onCancel={() => setView("reviews-list")} 
             saving={savingReview}
             uploadToCloudinary={uploadToCloudinary}
+            showAdminToast={showAdminToast}
           />
         ) : view === "trash-bin" ? (
           <div className="max-w-5xl mx-auto space-y-8">
@@ -4795,7 +5125,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                             await Promise.all(batchDeletes);
                             setTrashItems([]);
                             setConfirmingEmptyTrash(false);
-                            alert("Trash Bin emptied successfully!");
+                            showAdminToast("Trash Bin emptied successfully!", "success");
                           } catch (error) {
                             try {
                               handleFirestoreError(error, OperationType.DELETE, "trash/all");
@@ -6010,7 +6340,7 @@ SWIFT: ABCDEFGH"
                             updatedAt: serverTimestamp(),
                           });
                         }
-                        alert("Default plans seeded to database!");
+                        showAdminToast("Default plans seeded to database!", "success");
                         fetchPricing();
                       } catch (err) {
                         console.error(err);
@@ -6736,9 +7066,24 @@ SWIFT: ABCDEFGH"
                                   {(proj.domainName || proj.providerUrl ? 1 : 0) + (proj.hosts?.length || 0)} {(proj.domainName || proj.providerUrl ? 1 : 0) + (proj.hosts?.length || 0) === 1 ? 'Asset' : 'Assets'}
                                 </span>
                               )}
+                              {getProjectExpiringAssetsCount(proj) > 0 && (
+                                <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded text-[8px] font-black text-red-500 uppercase tracking-tighter animate-pulse">
+                                  <span className="relative flex h-1 w-1">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-1 w-1 bg-red-500"></span>
+                                  </span>
+                                  {getProjectExpiringAssetsCount(proj)} Expiring Domains
+                                </span>
+                              )}
                             </div>
-                            <h3 className="text-2xl font-black uppercase tracking-tight">
+                            <h3 className="text-2xl font-black uppercase tracking-tight flex items-center gap-2">
                               {proj.projectName}
+                              {getProjectExpiringAssetsCount(proj) > 0 && (
+                                <span className="flex h-2.5 w-2.5 relative flex-shrink-0 animate-pulse" title="Asset domain is expiring or expired (less than 1 month remaining!)">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                                </span>
+                              )}
                             </h3>
                             <div className="flex flex-col mt-1">
                               {client?.fullName && (
@@ -6814,14 +7159,20 @@ SWIFT: ABCDEFGH"
                                       <Calendar className={`w-3 h-3 ${
                                         new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
                                           ? "text-yellow-400/50" 
-                                          : "text-red-500/50"
+                                          : "text-red-500/50 animate-pulse"
                                       }`} />
-                                      <span className={`text-[9px] font-black uppercase tracking-widest ${
+                                      <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
                                         new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
                                           ? "text-yellow-400" 
-                                          : "text-red-500"
+                                          : "text-red-500 font-extrabold"
                                       }`}>
                                         Renewal: {new Date(proj.domainExpiration).toLocaleDateString()}
+                                        {isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration) && (
+                                          <span className="flex h-1.5 w-1.5 relative">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                                          </span>
+                                        )}
                                       </span>
                                     </div>
                                   )}
@@ -6853,14 +7204,20 @@ SWIFT: ABCDEFGH"
                                       <Calendar className={`w-3 h-3 ${
                                         new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
                                           ? "text-yellow-400/50" 
-                                          : "text-red-500/50"
+                                          : "text-red-500/50 animate-pulse"
                                       }`} />
-                                      <span className={`text-[9px] font-black uppercase tracking-widest ${
+                                      <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
                                         new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
                                           ? "text-yellow-400" 
-                                          : "text-red-500"
+                                          : "text-red-500 font-extrabold"
                                       }`}>
                                         Renewal: {new Date(h.domainExpiration).toLocaleDateString()}
+                                        {isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration) && (
+                                          <span className="flex h-1.5 w-1.5 relative">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                                          </span>
+                                        )}
                                       </span>
                                     </div>
                                   )}
@@ -6987,9 +7344,15 @@ SWIFT: ABCDEFGH"
                     {(() => {
                       const clientInvoices = invoices.filter(inv => inv.clientId === client.id);
                       if (clientInvoices.length > 0) {
-                        const isOverdue = clientInvoices.some(inv => inv.status === 'Overdue');
-                        const isPending = clientInvoices.some(inv => inv.status !== 'Paid' && inv.status !== 'Cancelled' && inv.status !== 'Draft');
-                        const isAllPaid = clientInvoices.every(inv => inv.status === 'Paid' || inv.status === 'Cancelled');
+                        const isOverdue = clientInvoices.some(inv => normalizeStatus(inv.status) === 'UNPAID');
+                        const isPending = clientInvoices.some(inv => {
+                          const s = normalizeStatus(inv.status);
+                          return s !== 'PAID' && s !== 'VOID' && s !== 'DRAFT';
+                        });
+                        const isAllPaid = clientInvoices.every(inv => {
+                          const s = normalizeStatus(inv.status);
+                          return s === 'PAID' || s === 'VOID';
+                        });
                         
                         if (isOverdue) return (
                           <div className="absolute top-0 right-0 px-4 py-1.5 bg-red-500 text-black text-[8px] font-black uppercase tracking-widest rounded-bl-xl shadow-lg">
@@ -7089,7 +7452,7 @@ SWIFT: ABCDEFGH"
                             Financial Yield
                           </span>
                           {(() => {
-                            const paidInvoices = invoices.filter(inv => inv.clientId === client.id && inv.status === 'Paid');
+                            const paidInvoices = invoices.filter(inv => inv.clientId === client.id && normalizeStatus(inv.status) === 'PAID');
                             const totalSpent = paidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
                             const totalTax = paidInvoices.reduce((sum, inv) => sum + (inv.vatAmount || 0), 0);
                             const netTotal = totalSpent - totalTax;
@@ -7709,9 +8072,24 @@ SWIFT: ABCDEFGH"
                     <span className="text-white/20 text-xs font-bold uppercase tracking-widest">
                       {editingClientProject.projectType}
                     </span>
+                    {getProjectExpiringAssetsCount(editingClientProject) > 0 && (
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded text-[8px] font-black text-red-500 uppercase tracking-tighter animate-pulse">
+                        <span className="relative flex h-1 w-1">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1 w-1 bg-red-500"></span>
+                        </span>
+                        {getProjectExpiringAssetsCount(editingClientProject)} Expiring Domains
+                      </span>
+                    )}
                   </div>
-                  <h2 className="text-5xl font-black uppercase tracking-tighter leading-none mb-4">
+                  <h2 className="text-5xl font-black uppercase tracking-tighter leading-none mb-4 flex items-center gap-3">
                     {editingClientProject.projectName}
+                    {getProjectExpiringAssetsCount(editingClientProject) > 0 && (
+                      <span className="flex h-3 w-3 relative flex-shrink-0 animate-pulse" title="Asset domain is expiring or expired (less than 1 month remaining!)">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                      </span>
+                    )}
                   </h2>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[10px] font-bold text-white/20 uppercase tracking-widest">Client:</span>
@@ -8070,18 +8448,26 @@ SWIFT: ABCDEFGH"
                           Custom Domain
                         </span>
                         {editingClientProject.domainName ? (
-                          <a
-                            href={
-                              editingClientProject.domainName.startsWith("http")
-                                ? editingClientProject.domainName
-                                : `https://${editingClientProject.domainName}`
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-white font-bold hover:text-zarco-cyan hover:underline transition-colors truncate"
-                          >
-                            {editingClientProject.domainName}
-                          </a>
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={
+                                editingClientProject.domainName.startsWith("http")
+                                  ? editingClientProject.domainName
+                                  : `https://${editingClientProject.domainName}`
+                              }
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-white font-bold hover:text-zarco-cyan hover:underline transition-colors truncate"
+                            >
+                              {editingClientProject.domainName}
+                            </a>
+                            {isAssetExpiringSoon(editingClientProject.domainExpiration, editingClientProject.isHostingFree, editingClientProject.showDomainExpiration) && (
+                              <span className="flex h-1.5 w-1.5 relative">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-xs text-white font-bold">
                             —
@@ -8182,18 +8568,26 @@ SWIFT: ABCDEFGH"
                               Custom Domain
                             </span>
                             {host.domainName ? (
-                              <a
-                                href={
-                                  host.domainName.startsWith("http")
-                                    ? host.domainName
-                                    : `https://${host.domainName}`
-                                }
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-white font-bold hover:text-zarco-cyan hover:underline transition-colors truncate"
-                              >
-                                {host.domainName}
-                              </a>
+                              <div className="flex items-center gap-1.5">
+                                <a
+                                  href={
+                                    host.domainName.startsWith("http")
+                                      ? host.domainName
+                                      : `https://${host.domainName}`
+                                  }
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-white font-bold hover:text-zarco-cyan hover:underline transition-colors truncate"
+                                >
+                                  {host.domainName}
+                                </a>
+                                {isAssetExpiringSoon(host.domainExpiration, host.isHostingFree, host.showDomainExpiration) && (
+                                  <span className="flex h-1.5 w-1.5 relative">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span className="text-xs text-white font-bold">
                                 —
@@ -8489,10 +8883,10 @@ SWIFT: ABCDEFGH"
                             });
                             // Refresh cache
                             setClientProjects(prev => prev.map(p => p.id === editingClientProject.id ? { ...editingClientProject, shareLanguage: editingClientProject.shareLanguage || shareLanguage, showReviewsBox: editingClientProject.showReviewsBox !== false } : p));
-                            alert("Sharing details committed successfully!");
+                            showAdminToast("Sharing details committed successfully!", "success");
                           } catch (err) {
                             console.error(err);
-                            alert("Failed to commit sharing details.");
+                            showAdminToast("Failed to commit sharing details.", "error");
                           }
                         }}
                         className="w-full bg-[#0c1417] hover:bg-white/5 border border-white/10 text-white font-black uppercase tracking-widest text-[9px] py-2 h-9 rounded-lg"
@@ -8507,7 +8901,7 @@ SWIFT: ABCDEFGH"
                           const langQuery = currentLang === "pt" ? "?lng=pt" : "?lng=en";
                           const url = `${window.location.origin}/#project-hub/${editingClientProject.id}${langQuery}`;
                           navigator.clipboard.writeText(url);
-                          alert(`Client Space Link Copied (${currentLang === "pt" ? "Portuguese" : "English"}):\n` + url);
+                          showAdminToast(`Client Space Link Copied (${currentLang === "pt" ? "Portuguese" : "English"})`, "success");
                         }}
                         className="w-full bg-zarco-cyan hover:bg-zarco-cyan/90 text-black font-black uppercase tracking-widest text-[9px] py-2 h-9 rounded-lg"
                       >
@@ -10186,7 +10580,7 @@ SWIFT: ABCDEFGH"
                             onClick={() => {
                               const finalUrl = `${window.location.origin}/#project-hub/${editingClientProject.id}${(editingClientProject.shareLanguage || "en") === "pt" ? "?lng=pt" : "?lng=en"}`;
                               navigator.clipboard.writeText(finalUrl);
-                              alert("Client Workspace Link copied successfully!");
+                              showAdminToast("Client Workspace Link copied successfully!", "success");
                             }}
                             className="bg-zarco-cyan/10 hover:bg-zarco-cyan/25 border border-zarco-cyan/35 text-zarco-cyan font-black text-[9px] uppercase tracking-widest px-3 py-1.5 h-8 rounded-md"
                           >
@@ -10245,10 +10639,10 @@ SWIFT: ABCDEFGH"
                                     ...editingClientProject,
                                     wireframes: newVal
                                   });
-                                  alert("Wireframe layout successfully uploaded and added below!");
+                                  showAdminToast("Wireframe layout successfully uploaded and added below!", "success");
                                 } catch (err: any) {
                                   console.error("Error uploading wireframe:", err);
-                                  alert(`Upload failed: ${err.message || "Unknown error"}`);
+                                  showAdminToast(`Upload failed: ${err.message || "Unknown error"}`, "error");
                                 } finally {
                                   setUploading(null);
                                   e.target.value = "";
@@ -11566,7 +11960,7 @@ SWIFT: ABCDEFGH"
                   € {invoices.filter(inv => {
                     const d = new Date(inv.issueDate);
                     return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (inv.status === 'Paid' ? inv.amount : 0), 0).toLocaleString()}
+                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? inv.amount : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Total Paid
@@ -11580,7 +11974,7 @@ SWIFT: ABCDEFGH"
                   € {invoices.filter(inv => {
                     const d = new Date(inv.issueDate);
                     return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (inv.status === 'Paid' ? (inv.amount - (inv.vatAmount || 0)) : 0), 0).toLocaleString()}
+                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.amount - (inv.vatAmount || 0)) : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Earnings after tax
@@ -11594,7 +11988,7 @@ SWIFT: ABCDEFGH"
                   € {invoices.filter(inv => {
                     const d = new Date(inv.issueDate);
                     return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (inv.status === 'Paid' ? (inv.vatAmount || 0) : 0), 0).toLocaleString()}
+                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.vatAmount || 0) : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                    Total VAT share
@@ -11608,7 +12002,10 @@ SWIFT: ABCDEFGH"
                   € {invoices.filter(inv => {
                     const d = new Date(inv.issueDate);
                     return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (inv.status !== 'Paid' && inv.status !== 'Cancelled' ? inv.amount : 0), 0).toLocaleString()}
+                  }).reduce((sum, inv) => {
+                    const s = normalizeStatus(inv.status);
+                    return sum + (s !== 'PAID' && s !== 'VOID' ? inv.amount : 0);
+                  }, 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Awaiting settlement
@@ -11699,11 +12096,14 @@ SWIFT: ABCDEFGH"
                               </p>
                             )}
                             <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded ${
-                              invoice.status === 'Paid' ? 'bg-green-500/20 text-green-400' : 
-                              invoice.status === 'Overdue' ? 'bg-red-500/20 text-red-100' :
-                              'bg-white/10 text-white/60'
+                              normalizeStatus(invoice.status) === 'PAID' ? 'bg-green-500/20 text-green-400' : 
+                              normalizeStatus(invoice.status) === 'UNPAID' ? 'bg-orange-500/20 text-orange-400' :
+                              normalizeStatus(invoice.status) === 'VOID' ? 'bg-red-500/20 text-red-400' :
+                              normalizeStatus(invoice.status) === 'PENDING' ? 'bg-cyan-500/20 text-cyan-400' :
+                              normalizeStatus(invoice.status) === 'DUPLICATE' ? 'bg-purple-500/20 text-purple-400' :
+                              'bg-white/10 text-white/40'
                             }`}>
-                              {invoice.status}
+                              {normalizeStatus(invoice.status)}
                             </span>
                           </div>
                         </div>
@@ -11808,16 +12208,20 @@ SWIFT: ABCDEFGH"
                             <div className="flex items-center gap-2 mb-2">
                               <span
                                 className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
-                                  invoice.status === "Paid"
+                                  normalizeStatus(invoice.status) === "PAID"
                                     ? "bg-green-500/20 text-green-500"
-                                    : invoice.status === "Overdue"
-                                      ? "bg-red-500/20 text-red-500"
-                                      : invoice.status === "Sent"
-                                        ? "bg-blue-500/20 text-blue-500"
-                                        : "bg-white/10 text-white/40"
+                                    : normalizeStatus(invoice.status) === "UNPAID"
+                                      ? "bg-orange-500/20 text-orange-400"
+                                      : normalizeStatus(invoice.status) === "VOID"
+                                        ? "bg-red-500/20 text-red-500"
+                                        : normalizeStatus(invoice.status) === "PENDING"
+                                          ? "bg-cyan-500/20 text-cyan-400"
+                                          : normalizeStatus(invoice.status) === "DUPLICATE"
+                                            ? "bg-purple-500/20 text-purple-400"
+                                            : "bg-white/10 text-white/40"
                                 }`}
                               >
-                                {invoice.status}
+                                {normalizeStatus(invoice.status)}
                               </span>
                             </div>
                             <h3 className="text-xl font-black text-white/80">
@@ -11943,8 +12347,33 @@ SWIFT: ABCDEFGH"
                     <div className="flex flex-col gap-2 min-w-[120px]">
                       <label className="text-[8px] font-bold text-white/20 uppercase tracking-widest ml-1">PDF Stamp</label>
                       <select 
-                        value={pdfStates[editingInvoice.id] || ""}
-                        onChange={(e) => setPdfStates({...pdfStates, [editingInvoice.id]: e.target.value})}
+                        value={pdfStates[editingInvoice.id] !== undefined
+                          ? pdfStates[editingInvoice.id]
+                          : (() => {
+                              const invStatus = (editingInvoice.status || "").toUpperCase();
+                              if (invStatus === "PAID") return "PAID";
+                              if (invStatus === "OVERDUE") return "UNPAID";
+                              if (invStatus === "SENT" || invStatus === "DRAFT") return "PENDING";
+                              if (invStatus === "CANCELLED") return "VOID";
+                              return "";
+                            })()
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPdfStates({...pdfStates, [editingInvoice.id]: val});
+                          
+                          // Sync back to invoice status
+                          let nextStatus = editingInvoice.status;
+                          if (val === "PAID") nextStatus = "Paid";
+                          else if (val === "UNPAID") nextStatus = "Overdue";
+                          else if (val === "PENDING") nextStatus = "Sent";
+                          else if (val === "VOID") nextStatus = "Cancelled";
+                          
+                          setEditingInvoice({
+                            ...editingInvoice,
+                            status: nextStatus
+                          });
+                        }}
                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white/60 focus:outline-none focus:border-zarco-cyan"
                       >
                         <option value="">NONE</option>
@@ -12258,9 +12687,12 @@ SWIFT: ABCDEFGH"
                     <div className="grid grid-cols-2 gap-3 pt-6 border-t border-zarco-cyan/10">
                       <Button
                         type="button"
-                        onClick={() => setEditingInvoice({ ...editingInvoice, status: 'Paid' })}
+                        onClick={() => {
+                          setPdfStates({ ...pdfStates, [editingInvoice.id]: "PAID" });
+                          setEditingInvoice({ ...editingInvoice, status: 'PAID' });
+                        }}
                         className={`font-black uppercase tracking-widest text-[9px] rounded-xl h-12 transition-all border-none ${
-                          editingInvoice.status === 'Paid' 
+                          normalizeStatus(editingInvoice.status) === 'PAID' 
                             ? 'bg-green-500 text-black shadow-[0_0_15px_rgba(34,197,94,0.3)]' 
                             : 'bg-white/5 text-white/40 hover:bg-white/10'
                         }`}
@@ -12269,9 +12701,12 @@ SWIFT: ABCDEFGH"
                       </Button>
                       <Button
                         type="button"
-                        onClick={() => setEditingInvoice({ ...editingInvoice, status: 'Sent' })}
+                        onClick={() => {
+                          setPdfStates({ ...pdfStates, [editingInvoice.id]: "PENDING" });
+                          setEditingInvoice({ ...editingInvoice, status: 'PENDING' });
+                        }}
                         className={`font-black uppercase tracking-widest text-[9px] rounded-xl h-12 transition-all border-none ${
-                          editingInvoice.status === 'Sent' 
+                          normalizeStatus(editingInvoice.status) === 'PENDING' 
                             ? 'bg-zarco-cyan text-black shadow-[0_0_15px_rgba(79,209,220,0.3)]' 
                             : 'bg-white/5 text-white/40 hover:bg-white/10'
                         }`}
@@ -12337,18 +12772,21 @@ SWIFT: ABCDEFGH"
                         Status
                       </label>
                       <select
-                        value={editingInvoice.status}
-                        onChange={(e) =>
+                        value={normalizeStatus(editingInvoice.status)}
+                        onChange={(e) => {
+                          const newStatus = e.target.value as any;
+                          const stampValue = newStatus === "DRAFT" ? "" : newStatus;
+                          setPdfStates({ ...pdfStates, [editingInvoice.id]: stampValue });
                           setEditingInvoice({
                             ...editingInvoice,
-                            status: e.target.value as any,
-                          })
-                        }
+                            status: newStatus,
+                          });
+                        }}
                         className="w-full bg-[#0c1417] border border-white/10 rounded-xl px-4 h-14 focus:outline-none focus:border-zarco-cyan appearance-none text-white/70 text-sm font-bold"
                       >
-                        {["Draft", "Sent", "Paid", "Overdue", "Cancelled"].map((s) => (
+                        {["DRAFT", "PENDING", "PAID", "UNPAID", "DUPLICATE", "VOID"].map((s) => (
                           <option key={s} value={s}>
-                            {s.toUpperCase()}
+                            {s}
                           </option>
                         ))}
                       </select>
@@ -12387,6 +12825,24 @@ SWIFT: ABCDEFGH"
                         className="bg-[#0c1417] border-white/10 rounded-xl h-14"
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-2 mt-6 mb-8">
+                    <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest leading-none ml-1 block">
+                      Notes / Terms (Will display on PDF)
+                    </label>
+                    <textarea
+                      value={editingInvoice.notes || ""}
+                      onChange={(e) =>
+                        setEditingInvoice({
+                          ...editingInvoice,
+                          notes: e.target.value,
+                        })
+                      }
+                      placeholder="Add any extra note, discount terms, or bank instruction to display on the invoice (e.g., Payment Terms: Net 30)"
+                      rows={3}
+                      className="w-full bg-[#0c1417] border border-white/10 rounded-[1.25rem] p-5 focus:outline-none focus:border-zarco-cyan/50 text-white/70 text-sm font-semibold transition-all placeholder:text-white/20"
+                    />
                   </div>
 
                   <div className="space-y-6">
@@ -13975,12 +14431,13 @@ SWIFT: ABCDEFGH"
   );
 }
 
-function ReviewForm({ review, onSave, onCancel, saving, uploadToCloudinary }: { 
+function ReviewForm({ review, onSave, onCancel, saving, uploadToCloudinary, showAdminToast }: { 
   review: Review | null, 
   onSave: (data: Partial<Review>) => void, 
   onCancel: () => void,
   saving: boolean,
-  uploadToCloudinary: (file: File, folderName?: string) => Promise<string>
+  uploadToCloudinary: (file: File, folderName?: string) => Promise<string>,
+  showAdminToast: (message: string, type?: 'success' | 'error' | 'warning') => void
 }) {
   const [formData, setFormData] = useState<Partial<Review>>(
     review || {
@@ -14005,7 +14462,7 @@ function ReviewForm({ review, onSave, onCancel, saving, uploadToCloudinary }: {
       const url = await uploadToCloudinary(file, "portfolio/reviews");
       setFormData(prev => ({ ...prev, avatar: url }));
     } catch (error) {
-      alert("Avatar upload failed");
+      showAdminToast("Avatar upload failed", "error");
     } finally {
       setUploading(false);
     }

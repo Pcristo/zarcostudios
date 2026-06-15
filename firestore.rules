@@ -160,7 +160,7 @@ service cloud.firestore {
         return data.clientId is string && isValidId(data.clientId) &&
                data.invoiceNumber is string && data.invoiceNumber.size() <= 100 &&
                data.amount is number &&
-               data.status in ["Draft", "Sent", "Paid", "Overdue", "Cancelled"] &&
+               data.status in ["Draft", "Sent", "Paid", "Overdue", "Cancelled", "DRAFT", "PENDING", "PAID", "UNPAID", "DUPLICATE", "VOID"] &&
                data.issueDate is string &&
                (data.get('updatedAt', request.time) is timestamp);
       }
