@@ -934,6 +934,52 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   }, [editingClientProject]);
 
   useEffect(() => {
+    if (!loadingClientProjects && clientProjects.length > 0 && !hasShownExpiringToast) {
+      const list: string[] = [];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const checkExpiring = (name: string, expDate: string, isFree: boolean | string | undefined, showExp: boolean | string | undefined) => {
+        if (!expDate) return;
+        const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
+        const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
+        if (isFreeBool && !showExpBool) return;
+
+        const exp = new Date(expDate);
+        if (isNaN(exp.getTime())) return;
+
+        const diffTime = exp.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays <= 30) {
+          list.push(name);
+        }
+      };
+
+      clientProjects.forEach(proj => {
+        if (proj.domainName) {
+          checkExpiring(proj.domainName, proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration);
+        }
+        if (proj.hosts) {
+          proj.hosts.forEach((h) => {
+            if (h.domainName) {
+              checkExpiring(h.domainName, h.domainExpiration, h.isHostingFree, h.showDomainExpiration);
+            }
+          });
+        }
+      });
+
+      if (list.length > 0) {
+        showAdminToast(
+          `Alert: You have ${list.length} managed domain renewal(s) expiring within 1 month! Check 'Attention Required' or 'Projects'.`,
+          "warning"
+        );
+        setHasShownExpiringToast(true);
+      }
+    }
+  }, [loadingClientProjects, clientProjects, hasShownExpiringToast]);
+
+  useEffect(() => {
     if (editingInvoice) {
       const subtotal = editingInvoice.items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
       const discountAmount = editingInvoice.applyDiscount 
@@ -3440,16 +3486,6 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const newFeedbackCount = unreadFeedbacks.length;
   const expiringAssetsCount = expiringAssets.length;
   const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0 || expiringAssetsCount > 0;
-
-  useEffect(() => {
-    if (!loadingClientProjects && clientProjects.length > 0 && expiringAssets.length > 0 && !hasShownExpiringToast) {
-      showAdminToast(
-        `Alert: You have ${expiringAssets.length} managed domain renewal(s) expiring within 1 month! Check 'Attention Required' or 'Projects'.`,
-        "warning"
-      );
-      setHasShownExpiringToast(true);
-    }
-  }, [loadingClientProjects, clientProjects.length, expiringAssets.length, hasShownExpiringToast]);
 
   const filteredProjects = projects.filter((project) => {
     if (!adminProjectSearch.trim()) return true;
