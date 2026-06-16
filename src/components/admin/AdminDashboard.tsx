@@ -78,6 +78,12 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
+import { AdminTrashBin } from "./components/AdminTrashBin";
+import { AdminSettings } from "./components/AdminSettings";
+import { AdminReviews } from "./components/AdminReviews";
+import { AdminPricing } from "./components/AdminPricing";
+import { AdminPortfolio } from "./components/AdminPortfolio";
+
 const INDUSTRIES = [
   "Information & Communication",
   "Professional Services",
@@ -589,6 +595,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       return [];
     }
   });
+  const [seenExpiringAssetIds, setSeenExpiringAssetIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("zarco_seen_expiring_asset_ids") || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [showAdminEstimatorModal, setShowAdminEstimatorModal] = useState(false);
   const [showFullDescModal, setShowFullDescModal] = useState(false);
   const [adminEstimatorMode, setAdminEstimatorMode] = useState<string>('primary');
@@ -813,10 +826,60 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   const [formData, setFormData] = useState(initialProjectState);
 
-  const getRenewalTheme = (expirationDate: string, isFree: boolean) => {
-    if (isFree || !expirationDate) return "text-white/20";
+  const parseFlexibleDate = (dateStr: string | undefined): Date | null => {
+    if (!dateStr) return null;
+    const trimmed = dateStr.trim();
+    if (!trimmed) return null;
 
-    const exp = new Date(expirationDate);
+    // Try standard Date parsing first
+    let d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+
+    // Handle DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const parts = trimmed.split(/[-/.]/);
+    if (parts.length === 3) {
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      const p2 = parseInt(parts[2], 10);
+
+      if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+        if (parts[0].length === 4) {
+          d = new Date(p0, p1 - 1, p2);
+          if (!isNaN(d.getTime())) return d;
+        } else if (parts[2].length === 4) {
+          if (p1 <= 12) {
+            d = new Date(p2, p1 - 1, p0);
+          } else if (p0 <= 12) {
+            d = new Date(p2, p0 - 1, p1);
+          } else {
+            d = new Date(p2, p1 - 1, p0);
+          }
+          if (!isNaN(d.getTime())) return d;
+        } else if (parts[2].length === 2) {
+          const year = p2 + 2000;
+          if (p1 <= 12) {
+            d = new Date(year, p1 - 1, p0);
+          } else if (p0 <= 12) {
+            d = new Date(year, p0 - 1, p1);
+          } else {
+            d = new Date(year, p1 - 1, p0);
+          }
+          if (!isNaN(d.getTime())) return d;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const getRenewalTheme = (expirationDate: string, isFree?: boolean) => {
+    if (!expirationDate) return "text-white/20";
+
+    const exp = parseFlexibleDate(expirationDate);
+    if (!exp || isNaN(exp.getTime())) return "text-white/20";
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -824,21 +887,20 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
     if (diffDays <= 30)
-      return "text-white font-bold bg-red-600 px-2 py-0.5 rounded border border-red-500 uppercase tracking-tighter";
+      return "text-white font-bold bg-red-600 px-2 py-0.5 rounded border border-red-500 uppercase tracking-tighter animate-pulse";
 
     return "text-yellow-500 font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20 uppercase tracking-tighter font-black";
   };
 
-  const isAssetExpiringSoon = (expirationDate: string | undefined, isFree: boolean | string | undefined, showExp: boolean | string | undefined) => {
+  const isAssetExpiringSoon = (expirationDate: string | undefined, isFree?: boolean | string | undefined, showExp?: boolean | string | undefined) => {
     if (!expirationDate) return false;
     
     const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
     const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
-    
     if (isFreeBool && !showExpBool) return false;
-
-    const exp = new Date(expirationDate);
-    if (isNaN(exp.getTime())) return false;
+    
+    const exp = parseFlexibleDate(expirationDate);
+    if (!exp || isNaN(exp.getTime())) return false;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -859,6 +921,27 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       proj.hosts.forEach((h) => {
         if (h.domainName && isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)) {
           count++;
+        }
+      });
+    }
+    return count;
+  };
+
+  const getProjectUnreadExpiringAssetsCount = (proj: ClientProject) => {
+    let count = 0;
+    if (proj.domainName && isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)) {
+      const assetId = `${proj.id}-${proj.domainName}`;
+      if (!seenExpiringAssetIds.includes(assetId)) {
+        count++;
+      }
+    }
+    if (proj.hosts) {
+      proj.hosts.forEach((h) => {
+        if (h.domainName && isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)) {
+          const assetId = `${proj.id}-${h.domainName}`;
+          if (!seenExpiringAssetIds.includes(assetId)) {
+            count++;
+          }
         }
       });
     }
@@ -945,8 +1028,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
         if (isFreeBool && !showExpBool) return;
 
-        const exp = new Date(expDate);
-        if (isNaN(exp.getTime())) return;
+        const exp = parseFlexibleDate(expDate);
+        if (!exp || isNaN(exp.getTime())) return;
 
         const diffTime = exp.getTime() - today.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -3440,16 +3523,11 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const checkExpiring = (name: string, expDate: string, isFree: boolean | string | undefined, showExp?: boolean | string | undefined, isHost = false) => {
+    const checkExpiring = (name: string, expDate: string, _isFree: boolean | string | undefined, _showExp?: boolean | string | undefined, isHost = false) => {
       if (!expDate) return;
       
-      const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
-      const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
-      
-      if (isFreeBool && !showExpBool) return;
-
-      const exp = new Date(expDate);
-      if (isNaN(exp.getTime())) return;
+      const exp = parseFlexibleDate(expDate);
+      if (!exp || isNaN(exp.getTime())) return;
 
       const diffTime = exp.getTime() - today.getTime();
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -3482,9 +3560,14 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     return list;
   });
 
+  const unreadExpiringAssets = expiringAssets.filter(asset => {
+    const assetId = `${asset.projectId}-${asset.assetName}`;
+    return !seenExpiringAssetIds.includes(assetId);
+  });
+
   const newReviewsCount = unreadReviews.length;
   const newFeedbackCount = unreadFeedbacks.length;
-  const expiringAssetsCount = expiringAssets.length;
+  const expiringAssetsCount = unreadExpiringAssets.length;
   const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0 || expiringAssetsCount > 0;
 
   const filteredProjects = projects.filter((project) => {
@@ -3827,6 +3910,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                           setSeenFeedbackIds(updated);
                           localStorage.setItem("zarco_seen_feedback_ids", JSON.stringify(updated));
                         }
+                        // Mark all unread expiring assets as seen
+                        const expiringIds = unreadExpiringAssets.map(asset => `${asset.projectId}-${asset.assetName}`);
+                        if (expiringIds.length > 0) {
+                          const updated = Array.from(new Set([...seenExpiringAssetIds, ...expiringIds]));
+                          setSeenExpiringAssetIds(updated);
+                          localStorage.setItem("zarco_seen_expiring_asset_ids", JSON.stringify(updated));
+                        }
                       }}
                       className="px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
                     >
@@ -3928,14 +4018,14 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                   )}
 
                   {/* Expiring Domains/Assets segment */}
-                  {expiringAssets.length > 0 && (
+                  {unreadExpiringAssets.length > 0 && (
                     <div className="space-y-3 col-span-1 lg:col-span-2 border-t border-white/[0.05] pt-6 first:border-0 first:pt-0">
                       <div className="text-[10px] uppercase font-black tracking-widest text-[#ef4444] flex items-center gap-2">
                         <Globe className="w-3.5 h-3.5 animate-pulse text-red-500" />
-                        Expiring Managed Assets / Domains ({expiringAssets.length})
+                        Expiring Managed Assets / Domains ({unreadExpiringAssets.length})
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        {expiringAssets.map((asset, idx) => {
+                        {unreadExpiringAssets.map((asset, idx) => {
                           const proj = clientProjects.find(p => p.id === asset.projectId);
                           return (
                             <div key={idx} className="p-4 rounded-2xl bg-[#0a1114]/80 border border-red-500/10 hover:border-red-500/25 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -3972,6 +4062,19 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                                   className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-red-500/15 text-red-400 border border-red-500/25 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
                                 >
                                   Manage Asset
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const assetId = `${asset.projectId}-${asset.assetName}`;
+                                    const updated = [...seenExpiringAssetIds, assetId];
+                                    setSeenExpiringAssetIds(updated);
+                                    localStorage.setItem("zarco_seen_expiring_asset_ids", JSON.stringify(updated));
+                                  }}
+                                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 text-white/40 border border-white/5 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+                                  title="Dismiss alert"
+                                >
+                                  <X className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
@@ -4935,395 +5038,33 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               </div>
             )}
           </div>
-        ) : view === "reviews-list" ? (
-          <div className="max-w-6xl mx-auto space-y-8">
-            <div className="flex justify-between items-end mb-4">
-              <div className="space-y-4">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zarco-cyan/10 border border-zarco-cyan/20">
-                  <Star className="w-3 h-3 text-zarco-cyan" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-zarco-cyan">Testimonials Module</span>
-                </div>
-                <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-                  Client <span className="text-zarco-cyan">Reviews</span>
-                </h1>
-                <p className="text-white/40 font-medium max-w-md">
-                  Manage client testimonials and toggle the visibility of the section on the homepage.
-                </p>
-                
-                <div className="flex flex-wrap items-center gap-6 mt-6">
-                  <div className="flex items-center gap-4 p-4 bg-[#0a1114] border border-white/5 rounded-2xl w-fit">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${testimonialsSettings.showSection ? "bg-green-500/10" : "bg-red-500/10"}`}>
-                        {testimonialsSettings.showSection ? <Eye className="w-5 h-5 text-green-500" /> : <EyeOff className="w-5 h-5 text-red-500" />}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest leading-none mb-1">Homepage Visibility</p>
-                        <p className={`text-xs font-black uppercase tracking-widest ${testimonialsSettings.showSection ? "text-green-500" : "text-red-500"}`}>
-                          Section is {testimonialsSettings.showSection ? "Currently Live" : "Now Hidden"}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => toggleTestimonialsSection(testimonialsSettings.showSection)}
-                      className={`ml-4 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                        testimonialsSettings.showSection 
-                          ? "bg-red-500/10 border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white" 
-                          : "bg-green-500/10 border-green-500/20 text-green-500 hover:bg-green-500 hover:text-white"
-                      }`}
-                    >
-                      {testimonialsSettings.showSection ? "Disable Component" : "Enable Component"}
-                    </Button>
-                  </div>
-
-                  <div className="flex items-center gap-4 p-4 bg-[#0a1114] border border-white/5 rounded-2xl w-fit">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-zarco-cyan/10">
-                        {testimonialsSettings.displayMode === 'carousel' ? <LayoutList className="w-5 h-5 text-zarco-cyan" /> : <Grid3X3 className="w-5 h-5 text-zarco-cyan" />}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest leading-none mb-1">Display Layout</p>
-                        <p className="text-xs font-black uppercase tracking-widest text-zarco-cyan">
-                          {testimonialsSettings.displayMode === 'carousel' ? "Carousel Mode" : "Grid Mode"}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => toggleTestimonialsDisplayMode(testimonialsSettings.displayMode)}
-                      className="ml-4 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-zarco-cyan/20 text-zarco-cyan hover:bg-zarco-cyan hover:text-black transition-all"
-                    >
-                      Switch to {testimonialsSettings.displayMode === 'carousel' ? "Grid" : "Carousel"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <Button
-                onClick={() => {
-                  setEditingReview(null);
-                  setView("reviews-form");
-                }}
-                className="bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] px-8 py-6 rounded-xl hover:scale-105 active:scale-95 transition-all border-none flex items-center gap-2 shadow-[0_10px_30px_rgba(0,183,255,0.2)]"
-              >
-                <Plus className="w-4 h-4" />
-                Add New Review
-              </Button>
-            </div>
-
-            {loadingReviews ? (
-              <div className="flex flex-col items-center justify-center py-20 bg-[#0a1114] border border-white/5 rounded-[2.5rem]">
-                <Loader2 className="w-12 h-12 text-zarco-cyan animate-spin mb-4" />
-                <p className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px]">Loading reviews data...</p>
-              </div>
-            ) : reviews.length === 0 ? (
-              <div className="text-center py-20 bg-[#0a1114] border border-white/5 rounded-[2.5rem]">
-                <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                  <Star className="w-10 h-10 text-white/10" />
-                </div>
-                <h3 className="text-white text-xl font-black uppercase tracking-tight mb-2">No reviews found</h3>
-                <p className="text-white/30 text-sm max-w-xs mx-auto">Start building trust by adding your first client testimonial.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {reviews.map((review) => (
-                  <Card key={review.id} className="bg-[#0a1114] border-white/5 rounded-[2rem] p-8 group hover:border-zarco-cyan/20 transition-all flex flex-col">
-                    <div className="flex justify-between items-start mb-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full overflow-hidden bg-white/5 ring-2 ring-white/10">
-                          {review.avatar ? (
-                            <img src={review.avatar} alt={review.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-white/20">
-                              <ImageIcon className="w-5 h-5" />
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-white font-black uppercase tracking-tight">{review.name}</h4>
-                            {review.linkedInUsername && (
-                              <Linkedin className="w-3 h-3 text-white/20" />
-                            )}
-                          </div>
-                          <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest">{review.companyName}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-1">
-                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${
-                          review.lang === 'en' ? 'bg-blue-500/10 text-blue-500' :
-                          review.lang === 'pt' ? 'bg-orange-500/10 text-orange-500' :
-                          'bg-purple-500/10 text-purple-500'
-                        }`}>
-                          {review.lang === 'both' ? 'Hybrid' : review.lang}
-                        </span>
-                        <button 
-                          onClick={() => toggleReviewStatus(review.id, review.show)}
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${review.show ? 'bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white' : 'bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white'}`}
-                        >
-                          {review.show ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="flex-1 italic text-white/60 text-sm mb-8 relative">
-                      <span className="absolute -top-4 -left-2 text-4xl text-zarco-cyan/20 font-black">"</span>
-                      <p className="line-clamp-4 leading-relaxed">
-                        {review.reviewTextEn || review.reviewTextPt}
-                      </p>
-                    </div>
-
-                    <div className="flex gap-2 pt-6 border-t border-white/5">
-                      <Button
-                        onClick={() => {
-                          setEditingReview(review);
-                          setView("reviews-form");
-                        }}
-                        className="flex-1 bg-white/5 border-white/10 text-white hover:bg-white/10 rounded-xl font-bold uppercase tracking-widest text-[10px] h-11"
-                        variant="outline"
-                      >
-                        Edit Review
-                      </Button>
-                      <Button
-                        onClick={() => setReviewConfirmingDelete(review.id)}
-                        className="w-11 h-11 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors rounded-xl flex items-center justify-center p-0"
-                        variant="outline"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            {reviewConfirmingDelete && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                <Card className="bg-[#0a1114] border-red-500/20 w-full max-w-md rounded-[2.5rem] p-10 shadow-2xl">
-                  <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                    <Trash2 className="w-10 h-10 text-red-500" />
-                  </div>
-                  <h3 className="text-2xl font-black uppercase tracking-tight text-white text-center mb-2">Delete Review?</h3>
-                  <p className="text-white/40 text-center text-sm font-medium mb-8 leading-relaxed">
-                    This action is permanent and cannot be undone. Are you sure you want to delete this testimonial?
-                  </p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Button
-                      onClick={() => setReviewConfirmingDelete(null)}
-                      className="bg-white/5 text-white/40 hover:text-white rounded-xl py-6 font-black uppercase tracking-widest text-[10px] border-none hover:bg-white/10"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      onClick={() => handleDeleteReview(reviewConfirmingDelete)}
-                      className="bg-red-600 text-white rounded-xl py-6 font-black uppercase tracking-widest text-[10px] border-none hover:bg-red-700 shadow-[0_10px_30px_rgba(220,38,38,0.2)]"
-                    >
-                      Confirm Delete
-                    </Button>
-                  </div>
-                </Card>
-              </div>
-            )}
-          </div>
-        ) : view === "reviews-form" ? (
-          <ReviewForm 
-            review={editingReview} 
-            onSave={handleSaveReview} 
-            onCancel={() => setView("reviews-list")} 
-            saving={savingReview}
+        ) : view === "reviews-list" || view === "reviews-form" ? (
+          <AdminReviews
+            view={view}
+            setView={setView}
+            reviews={reviews}
+            editingReview={editingReview}
+            setEditingReview={setEditingReview}
+            loadingReviews={loadingReviews}
+            savingReview={savingReview}
+            testimonialsSettings={testimonialsSettings}
+            toggleTestimonialsSection={toggleTestimonialsSection}
+            toggleTestimonialsDisplayMode={toggleTestimonialsDisplayMode}
+            toggleReviewStatus={toggleReviewStatus}
+            handleSaveReview={handleSaveReview}
+            handleDeleteReview={handleDeleteReview}
             uploadToCloudinary={uploadToCloudinary}
             showAdminToast={showAdminToast}
           />
         ) : view === "trash-bin" ? (
-          <div className="max-w-5xl mx-auto space-y-8">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-4">
-              <div className="space-y-4">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20">
-                  <Trash2 className="w-3 h-3 text-red-400" />
-                  <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Recycle Bin</span>
-                </div>
-                <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-                  Deleted <span className="text-red-400">Items</span>
-                </h1>
-                <p className="text-white/40 text-[11px] font-medium max-w-md uppercase tracking-wider">
-                  Restore previously deleted clients, projects, or billing invoices, or delete them permanently.
-                </p>
-              </div>
-
-              {trashItems.length > 0 && (
-                <div className="flex items-center gap-2 self-start sm:self-auto">
-                  {confirmingEmptyTrash ? (
-                    <div className="flex items-center gap-2 bg-red-500/10 p-1.5 rounded-xl border border-red-500/20">
-                      <span className="text-[9px] font-black uppercase tracking-widest text-red-400 px-2">
-                        Are you sure?
-                      </span>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const batchDeletes = trashItems.map(item => deleteDoc(doc(db, "trash", item.id)));
-                            await Promise.all(batchDeletes);
-                            setTrashItems([]);
-                            setConfirmingEmptyTrash(false);
-                            showAdminToast("Trash Bin emptied successfully!", "success");
-                          } catch (error) {
-                            try {
-                              handleFirestoreError(error, OperationType.DELETE, "trash/all");
-                            } catch (err) {
-                              // error is already logged and alerted
-                            }
-                          }
-                        }}
-                        className="bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-[8px] px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-                      >
-                        Yes, Empty
-                      </button>
-                      <button
-                        onClick={() => setConfirmingEmptyTrash(false)}
-                        className="bg-white/10 hover:bg-white/25 text-white font-black uppercase tracking-widest text-[8px] px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmingEmptyTrash(true)}
-                      className="bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/30 font-black uppercase tracking-widest text-[9px] px-6 py-3 rounded-xl transition-all h-fit cursor-pointer flex items-center gap-2"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Empty Bin
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Filter Pills */}
-            <div className="flex flex-wrap items-center gap-2 p-1 bg-[#0a1114] border border-white/5 rounded-2xl w-fit">
-              <button
-                onClick={() => setTrashFilter("all")}
-                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${trashFilter === "all" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-              >
-                All ({trashItems.length})
-              </button>
-              <button
-                onClick={() => setTrashFilter("client")}
-                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${trashFilter === "client" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-              >
-                Clients ({trashItems.filter(item => item.type === "client").length})
-              </button>
-              <button
-                onClick={() => setTrashFilter("project")}
-                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${trashFilter === "project" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-              >
-                Projects ({trashItems.filter(item => item.type === "project").length})
-              </button>
-              <button
-                onClick={() => setTrashFilter("bill")}
-                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${trashFilter === "bill" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-              >
-                Bills ({trashItems.filter(item => item.type === "bill").length})
-              </button>
-            </div>
-
-            {/* Deleted Items Listing */}
-            {loadingTrash ? (
-              <div className="flex justify-center py-24">
-                <Loader2 className="w-10 h-10 text-red-500 animate-spin" />
-              </div>
-            ) : trashItems.filter(item => trashFilter === "all" || item.type === trashFilter).length === 0 ? (
-              <div className="border border-white/5 bg-[#0a1114]/50 rounded-[2rem] p-20 text-center flex flex-col items-center justify-center space-y-4">
-                <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center text-white/10 mb-2">
-                  <Trash2 className="w-8 h-8" />
-                </div>
-                <h3 className="text-white text-lg font-black uppercase tracking-tight">Your bin is pristine</h3>
-                <p className="text-white/30 text-xs max-w-xs leading-relaxed uppercase font-bold tracking-wider">No deleted items match this filter.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {trashItems
-                  .filter(item => trashFilter === "all" || item.type === trashFilter)
-                  .map((item) => {
-                    const iconColor = item.type === "client" ? "text-zarco-cyan bg-zarco-cyan/10 border-zarco-cyan/25" 
-                                    : item.type === "project" ? "text-zarco-purple bg-zarco-purple/10 border-zarco-purple/25" 
-                                    : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-                    
-                    const itemIcon = item.type === "client" ? <Users className="w-4 h-4" />
-                                   : item.type === "project" ? <FolderRoot className="w-4 h-4" />
-                                   : <Receipt className="w-4 h-4" />;
-
-                    return (
-                      <Card key={item.id} className="bg-[#0a1114] border-white/5 rounded-[2rem] p-6 group hover:border-red-500/20 transition-all flex flex-col justify-between min-h-[220px]">
-                        <div>
-                          <div className="flex justify-between items-start mb-4">
-                            <span className={`p-2.5 rounded-2xl border ${iconColor}`}>
-                              {itemIcon}
-                            </span>
-                            <span className="text-[8px] font-black uppercase tracking-widest text-[#9ca3af]/40 h-fit bg-white/5 border border-white/10 rounded-lg px-2 py-0.5">
-                              {new Date(item.deletedAt).toLocaleDateString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit"
-                              })}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1">
-                            <span className="text-[8px] font-black uppercase tracking-widest text-white/30 block tracking-widest">
-                              {item.type} • {item.originalCollection}
-                            </span>
-                            <h4 className="text-white font-black text-sm uppercase tracking-tight line-clamp-1 block leading-tight">
-                              {item.name}
-                            </h4>
-                            <p className="text-[9px] font-bold text-[#e5e7eb]/40 uppercase tracking-widest truncate mt-1">
-                              {item.details}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2.5 mt-6">
-                          {trashConfirmingDelete === item.id ? (
-                            <div className="flex-1 flex gap-2 items-center bg-red-500/10 p-1.5 rounded-xl border border-red-500/20 w-full justify-between">
-                              <span className="text-[8px] font-black uppercase tracking-widest text-red-400 px-2">
-                                Permanent?
-                              </span>
-                              <div className="flex gap-1.5">
-                                <button
-                                  onClick={() => handlePermanentDelete(item.id)}
-                                  className="bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-[8px] px-3 py-2 rounded-lg transition-all cursor-pointer"
-                                >
-                                  Yes
-                                </button>
-                                <button
-                                  onClick={() => setTrashConfirmingDelete(null)}
-                                  className="bg-white/10 hover:bg-white/20 text-white font-black uppercase tracking-widest text-[8px] px-3 py-2 rounded-lg transition-all cursor-pointer"
-                                >
-                                  No
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handleRestoreTrashItem(item)}
-                                className="flex-1 bg-[#0d171a] hover:bg-[#122226] text-zarco-cyan text-[9px] font-black uppercase tracking-widest py-3 rounded-xl border border-white/5 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                Restore
-                              </button>
-                              <button
-                                onClick={() => setTrashConfirmingDelete(item.id)}
-                                className="flex-1 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-[9px] font-black uppercase tracking-widest py-3 rounded-xl border border-red-500/25 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </Card>
-                    );
-                  })}
-              </div>
-            )}
-          </div>
+          <AdminTrashBin
+            trashItems={trashItems}
+            setTrashItems={setTrashItems}
+            loadingTrash={loadingTrash}
+            handleRestoreTrashItem={handleRestoreTrashItem}
+            handlePermanentDelete={handlePermanentDelete}
+            showAdminToast={showAdminToast}
+          />
         ) : view === "settings" ? (
           <div className="max-w-4xl mx-auto">
             <div className="flex justify-between items-start mb-12">
@@ -6034,186 +5775,30 @@ SWIFT: ABCDEFGH"
               </div>
             </div>
           </div>
-        ) : view === "portfolio-list" ? (
-          <div>
-            <div className="flex justify-between items-center mb-12">
-              <h2 className="text-4xl font-black uppercase tracking-tighter">
-                Portfolio
-              </h2>
-              <Button
-                onClick={handleAddNewPortfolioProject}
-                className="bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] px-8 py-6 rounded-xl hover:bg-zarco-cyan/90 transition-all border-none flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Start New Project
-              </Button>
-            </div>
-
-            {/* Admin Portfolio Search Bar */}
-            {projects.length > 0 && (
-              <div className="relative mb-8 max-w-md animate-fade-in">
-                <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
-                  <Search className="w-4 h-4" />
-                </span>
-                <input
-                  type="text"
-                  value={adminProjectSearch}
-                  onChange={(e) => setAdminProjectSearch(e.target.value)}
-                  placeholder="Search projects by title, year, company/institution..."
-                  className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
-                />
-                {adminProjectSearch && (
-                  <button
-                    onClick={() => setAdminProjectSearch('')}
-                    className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {projects.length === 0 ? (
-                <div className="col-span-full py-32 flex flex-col items-center justify-center border-2 border-dashed border-white/5 rounded-[3rem] bg-white/[0.01]">
-                  <ImageIcon className="w-12 h-12 text-white/10 mb-6" />
-                  <h3 className="text-xl font-bold uppercase tracking-tight text-white/40">
-                    No projects found
-                  </h3>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/20 mt-2">
-                    Start by creating your first bespoke experience
-                  </p>
-                </div>
-              ) : filteredProjects.length === 0 ? (
-                <div className="col-span-full py-20 text-center border border-white/5 rounded-[2.5rem] bg-white/[0.01] flex flex-col items-center justify-center gap-4">
-                  <p className="text-white/40 font-bold uppercase tracking-widest text-[11px]">
-                    No projects match your search criteria.
-                  </p>
-                  <button
-                    onClick={() => setAdminProjectSearch('')}
-                    className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                  >
-                    Clear Filter
-                  </button>
-                </div>
-              ) : (
-                filteredProjects.map((project) => (
-                  <Card
-                    key={project.id}
-                    className="bg-[#0a1114] border-white/5 rounded-[2rem] overflow-hidden group hover:border-zarco-cyan/20 transition-all"
-                  >
-                    <div className="aspect-video relative overflow-hidden bg-black">
-                      <img
-                        src={project.image}
-                        alt=""
-                        className="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-700"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="absolute top-4 right-4 flex gap-2">
-                        <button
-                          onClick={() =>
-                            toggleStatusUpdate(
-                              project.id,
-                              "isActive",
-                              project.isActive ?? true,
-                            )
-                          }
-                          className={`w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-md border ${project.isActive !== false ? "bg-green-500/20 border-green-500/30 text-green-500" : "bg-red-500/20 border-red-500/30 text-red-500"}`}
-                        >
-                          {project.isActive !== false ? (
-                            <Eye className="w-4 h-4" />
-                          ) : (
-                            <EyeOff className="w-4 h-4" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() =>
-                            toggleStatusUpdate(
-                              project.id,
-                              "isFeatured",
-                              project.isFeatured ?? false,
-                            )
-                          }
-                          className={`w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-md border ${project.isFeatured ? "bg-zarco-cyan/20 border-zarco-cyan/30 text-zarco-cyan" : "bg-white/5 border-white/10 text-white/40"}`}
-                        >
-                          <Star
-                            className={`w-4 h-4 ${project.isFeatured ? "fill-current" : ""}`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                    <CardContent className="p-8">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zarco-cyan mb-1">
-                            {project.category}
-                          </p>
-                          <h3 className="text-xl font-bold uppercase tracking-tight">
-                            {project.title}
-                          </h3>
-                        </div>
-                        <span className="text-[11px] font-bold text-white/20">
-                          {project.year}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-3 pt-4 border-t border-white/5">
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            className="flex-1 text-[11px] font-bold uppercase tracking-widest text-white/40 hover:text-white hover:bg-white/5 py-4 border border-white/5 rounded-xl flex items-center justify-center gap-2"
-                            onClick={() => handleEdit(project)}
-                          >
-                            <Settings className="w-4 h-4" />
-                            Edit Project
-                          </Button>
-                          
-                          {projectConfirmingDelete === project.id ? (
-                            <div className="flex gap-2 animate-in fade-in slide-in-from-right-2 duration-300">
-                              <Button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDeleteProject(project.id);
-                                }}
-                                className="bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest px-4 h-11 rounded-xl transition-all active:scale-95"
-                              >
-                                Confirm
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setProjectConfirmingDelete(null);
-                                }}
-                                className="text-white/40 hover:text-white text-[10px] font-bold uppercase tracking-widest px-3 h-11 border border-white/5 rounded-xl transition-all"
-                              >
-                                X
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setProjectConfirmingDelete(project.id);
-                              }}
-                              className="p-3 text-white/20 hover:text-red-500 hover:bg-red-500/10 border border-white/5 rounded-xl transition-colors"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
+        ) : view === "portfolio-list" || view === "create" || view === "edit" ? (
+          <AdminPortfolio
+            view={view}
+            setView={setView}
+            projects={projects}
+            filteredProjects={filteredProjects}
+            adminProjectSearch={adminProjectSearch}
+            setAdminProjectSearch={setAdminProjectSearch}
+            projectConfirmingDelete={projectConfirmingDelete}
+            setProjectConfirmingDelete={setProjectConfirmingDelete}
+            formData={formData}
+            setFormData={setFormData}
+            uploading={uploading}
+            handleAddNewPortfolioProject={handleAddNewPortfolioProject}
+            handleEdit={handleEdit}
+            handleDeleteProject={handleDeleteProject}
+            handleSaveProject={handleSaveProject}
+            toggleStatusUpdate={toggleStatusUpdate}
+            handleFileUpload={handleFileUpload}
+            addGalleryUrl={addGalleryUrl}
+            removeGalleryImage={removeGalleryImage}
+            toggleTech={toggleTech}
+            resetForm={resetForm}
+          />
         ) : view === "pricing-list" ? (
           <div>
             <div className="flex justify-between items-start mb-12">
@@ -7108,7 +6693,7 @@ SWIFT: ABCDEFGH"
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                                     <span className="relative inline-flex rounded-full h-1 w-1 bg-red-500"></span>
                                   </span>
-                                  {getProjectExpiringAssetsCount(proj)} Expiring Domains
+                                  {getProjectExpiringAssetsCount(proj)} Expiring Asset alerts
                                 </span>
                               )}
                             </div>
@@ -7190,19 +6775,22 @@ SWIFT: ABCDEFGH"
                                       </span>
                                     )}
                                   </div>
-                                  {proj.domainExpiration && (!proj.isHostingFree || proj.showDomainExpiration) && (
+                                  {proj.domainExpiration && (
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                       <Calendar className={`w-3 h-3 ${
-                                        new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400/50" 
-                                          : "text-red-500/50 animate-pulse"
+                                        isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)
+                                          ? "text-red-500/50 animate-pulse" 
+                                          : "text-yellow-400/50"
                                       }`} />
                                       <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
-                                        new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400" 
-                                          : "text-red-500 font-extrabold"
+                                        isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)
+                                          ? "text-red-500 font-extrabold" 
+                                          : "text-yellow-400"
                                       }`}>
-                                        Renewal: {new Date(proj.domainExpiration).toLocaleDateString()}
+                                        Renewal: {(() => {
+                                          const parsed = parseFlexibleDate(proj.domainExpiration);
+                                          return parsed ? parsed.toLocaleDateString() : proj.domainExpiration;
+                                        })()}
                                         {isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration) && (
                                           <span className="flex h-1.5 w-1.5 relative">
                                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
@@ -7235,19 +6823,22 @@ SWIFT: ABCDEFGH"
                                       </span>
                                     )}
                                   </div>
-                                  {h.domainExpiration && (!h.isHostingFree || h.showDomainExpiration) && (
+                                  {h.domainExpiration && (
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                       <Calendar className={`w-3 h-3 ${
-                                        new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400/50" 
-                                          : "text-red-500/50 animate-pulse"
+                                        isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)
+                                          ? "text-red-500/50 animate-pulse" 
+                                          : "text-yellow-400/50"
                                       }`} />
                                       <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
-                                        new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400" 
-                                          : "text-red-500 font-extrabold"
+                                        isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)
+                                          ? "text-red-500 font-extrabold" 
+                                          : "text-yellow-400"
                                       }`}>
-                                        Renewal: {new Date(h.domainExpiration).toLocaleDateString()}
+                                        Renewal: {(() => {
+                                          const parsed = parseFlexibleDate(h.domainExpiration);
+                                          return parsed ? parsed.toLocaleDateString() : h.domainExpiration;
+                                        })()}
                                         {isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration) && (
                                           <span className="flex h-1.5 w-1.5 relative">
                                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
@@ -7902,8 +7493,14 @@ SWIFT: ABCDEFGH"
                               </span>
                             )}
                           </div>
-                          <h4 className="text-xl font-bold uppercase tracking-tight mb-6 leading-tight">
-                            {proj.projectName}
+                          <h4 className="text-xl font-bold uppercase tracking-tight mb-6 leading-tight flex items-center justify-between gap-2">
+                            <span>{proj.projectName}</span>
+                            {getProjectExpiringAssetsCount(proj) > 0 && (
+                              <span className="flex h-2.5 w-2.5 relative flex-shrink-0" title="Asset domain is expiring or expired (less than 1 month remaining!)">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                              </span>
+                            )}
                           </h4>
                           <p className="text-[11px] text-white/40 line-clamp-2 mb-6">
                             {proj.shortDescription ||
@@ -7958,19 +7555,22 @@ SWIFT: ABCDEFGH"
                                       </span>
                                     )}
                                   </div>
-                                  {proj.domainExpiration && (!proj.isHostingFree || proj.showDomainExpiration) && (
+                                  {proj.domainExpiration && (
                                     <div className="flex items-center gap-1.5">
                                       <Calendar className={`w-3 h-3 ${
-                                        new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400/50" 
-                                          : "text-red-500/50"
+                                        isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)
+                                          ? "text-red-500/50" 
+                                          : "text-yellow-400/50"
                                       }`} />
                                       <span className={`text-[9px] font-black uppercase tracking-widest ${
-                                        new Date(proj.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400" 
-                                          : "text-red-500"
+                                        isAssetExpiringSoon(proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration)
+                                          ? "text-red-500" 
+                                          : "text-yellow-400"
                                       }`}>
-                                        Renewal: {new Date(proj.domainExpiration).toLocaleDateString()}
+                                        Renewal: {(() => {
+                                          const parsed = parseFlexibleDate(proj.domainExpiration);
+                                          return parsed ? parsed.toLocaleDateString() : proj.domainExpiration;
+                                        })()}
                                       </span>
                                     </div>
                                   )}
@@ -7995,19 +7595,22 @@ SWIFT: ABCDEFGH"
                                       </span>
                                     )}
                                   </div>
-                                  {h.domainExpiration && (!h.isHostingFree || h.showDomainExpiration) && (
+                                  {h.domainExpiration && (
                                     <div className="flex items-center gap-1.5">
                                       <Calendar className={`w-3 h-3 ${
-                                        new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400/50" 
-                                          : "text-red-500/50"
+                                        isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)
+                                          ? "text-red-500/50" 
+                                          : "text-yellow-400/50"
                                       }`} />
                                       <span className={`text-[9px] font-black uppercase tracking-widest ${
-                                        new Date(h.domainExpiration).getTime() - new Date().getTime() > 30 * 24 * 60 * 60 * 1000 
-                                          ? "text-yellow-400" 
-                                          : "text-red-500"
+                                        isAssetExpiringSoon(h.domainExpiration, h.isHostingFree, h.showDomainExpiration)
+                                          ? "text-red-500" 
+                                          : "text-yellow-400"
                                       }`}>
-                                        Renewal: {new Date(h.domainExpiration).toLocaleDateString()}
+                                        Renewal: {(() => {
+                                          const parsed = parseFlexibleDate(h.domainExpiration);
+                                          return parsed ? parsed.toLocaleDateString() : h.domainExpiration;
+                                        })()}
                                       </span>
                                     </div>
                                   )}
@@ -8108,19 +7711,19 @@ SWIFT: ABCDEFGH"
                     <span className="text-white/20 text-xs font-bold uppercase tracking-widest">
                       {editingClientProject.projectType}
                     </span>
-                    {getProjectExpiringAssetsCount(editingClientProject) > 0 && (
+                    {getProjectUnreadExpiringAssetsCount(editingClientProject) > 0 && (
                       <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded text-[8px] font-black text-red-500 uppercase tracking-tighter animate-pulse">
                         <span className="relative flex h-1 w-1">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-1 w-1 bg-red-500"></span>
                         </span>
-                        {getProjectExpiringAssetsCount(editingClientProject)} Expiring Domains
+                        {getProjectUnreadExpiringAssetsCount(editingClientProject)} Expiring Assets
                       </span>
                     )}
                   </div>
                   <h2 className="text-5xl font-black uppercase tracking-tighter leading-none mb-4 flex items-center gap-3">
                     {editingClientProject.projectName}
-                    {getProjectExpiringAssetsCount(editingClientProject) > 0 && (
+                    {getProjectUnreadExpiringAssetsCount(editingClientProject) > 0 && (
                       <span className="flex h-3 w-3 relative flex-shrink-0 animate-pulse" title="Asset domain is expiring or expired (less than 1 month remaining!)">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -8509,11 +8112,14 @@ SWIFT: ABCDEFGH"
                             —
                           </span>
                         )}
-                        {editingClientProject.domainExpiration && (!editingClientProject.isHostingFree || editingClientProject.showDomainExpiration) && (
+                        {editingClientProject.domainExpiration && (
                           <span
-                            className={`text-[11px] italic mt-1 inline-block ${getRenewalTheme(editingClientProject.domainExpiration, editingClientProject.isHostingFree && !editingClientProject.showDomainExpiration)}`}
+                            className={`text-[11px] italic mt-1 inline-block ${getRenewalTheme(editingClientProject.domainExpiration)}`}
                           >
-                            Renewal: {editingClientProject.domainExpiration}
+                            Renewal: {(() => {
+                              const parsed = parseFlexibleDate(editingClientProject.domainExpiration);
+                              return parsed ? parsed.toLocaleDateString() : editingClientProject.domainExpiration;
+                            })()}
                           </span>
                         )}
                       </div>
@@ -8629,11 +8235,14 @@ SWIFT: ABCDEFGH"
                                 —
                               </span>
                             )}
-                            {host.domainExpiration && (!host.isHostingFree || host.showDomainExpiration) && (
+                            {host.domainExpiration && (
                               <span
-                                className={`text-[11px] italic mt-1 inline-block ${getRenewalTheme(host.domainExpiration, host.isHostingFree && !host.showDomainExpiration)}`}
+                                className={`text-[11px] italic mt-1 inline-block ${getRenewalTheme(host.domainExpiration)}`}
                               >
-                                Renewal: {host.domainExpiration}
+                                Renewal: {(() => {
+                                  const parsed = parseFlexibleDate(host.domainExpiration);
+                                  return parsed ? parsed.toLocaleDateString() : host.domainExpiration;
+                                })()}
                               </span>
                             )}
                           </div>
@@ -12994,569 +12603,7 @@ SWIFT: ABCDEFGH"
               </div>
             </div>
           </form>
-        ) : (
-          <form onSubmit={handleSaveProject} className="max-w-4xl mx-auto pb-20">
-            <div className="flex justify-between items-start mb-12">
-              <div>
-                <h2 className="text-5xl font-black uppercase tracking-tighter leading-none mb-4">
-                  {view === "create" ? "Add Portfolio Project" : "Edit Project"}
-                </h2>
-                <p className="text-white/40 text-sm">
-                  Add a new bespoke digital experience to the Zarco Studios portfolio.
-                </p>
-              </div>
-              <div className="flex gap-4">
-                <Button
-                  type="button"
-                  onClick={resetForm}
-                  variant="outline"
-                  className="bg-transparent border-white/10 text-white/60 font-bold uppercase tracking-widest text-[11px] rounded-xl px-10 py-6 hover:bg-white/5"
-                >
-                  Discard
-                </Button>
-                <Button
-                  type="submit"
-                  className="bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] rounded-xl px-10 py-6 hover:bg-zarco-cyan/90 border-none transition-all shadow-[0_0_20px_rgba(79,209,220,0.3)]"
-                >
-                  {view === "create" ? "Add Project" : "Update Project"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-8">
-              {/* Basic Information */}
-              <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-10">
-                <CardHeader className="px-0 pt-0 mb-8 border-b border-white/5 pb-6">
-                  <CardTitle className="text-xl font-bold uppercase tracking-tight">
-                    Basic Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-0 space-y-8">
-                  <div className="grid md:grid-cols-2 gap-8">
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Project Name (EN)
-                      </label>
-                      <Input
-                        required
-                        value={formData.title}
-                        onChange={(e) =>
-                          setFormData({ ...formData, title: e.target.value })
-                        }
-                        placeholder="e.g. Neo Vision Rebrand"
-                        className="bg-[#0c1417] border-white/10 rounded-xl px-6 py-4 h-14 focus-visible:ring-zarco-cyan transition-colors"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Project Name (PT)
-                      </label>
-                      <Input
-                        value={formData.titlePt}
-                        onChange={(e) =>
-                          setFormData({ ...formData, titlePt: e.target.value })
-                        }
-                        placeholder="Ex: Rebrand Neo Vision"
-                        className="bg-[#0c1417] border-white/10 rounded-xl px-6 py-4 h-14 focus-visible:ring-zarco-cyan transition-colors"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Category
-                      </label>
-                      <div className="relative">
-                        <select
-                          required
-                          value={formData.category}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              category: e.target.value,
-                            })
-                          }
-                          className="w-full bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 h-14 focus:outline-none focus:border-zarco-cyan appearance-none text-white/70"
-                        >
-                          <option value="">Select Category</option>
-                          {categories.map((cat) => (
-                            <option key={cat} value={cat}>
-                              {cat}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 pointer-events-none" />
-                      </div>
-                    </div>
-                    {formData.category === "College" && (
-                      <div className="flex flex-col gap-3">
-                        <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                          Institution
-                        </label>
-                        <div className="relative">
-                          <select
-                            required
-                            value={formData.institution}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                institution: e.target.value,
-                              })
-                            }
-                            className="w-full bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 h-14 focus:outline-none focus:border-zarco-cyan appearance-none text-white/70"
-                          >
-                            <option value="none">Select Institution</option>
-                            {institutions.map((inst) => (
-                              <option key={inst} value={inst}>
-                                {inst}
-                              </option>
-                            ))}
-                          </select>
-                          <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 pointer-events-none" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-8">
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Short Description (EN)
-                      </label>
-                      <Input
-                        value={formData.shortDescription}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            shortDescription: e.target.value,
-                          })
-                        }
-                        placeholder="A brief one-liner summarizing the project..."
-                        className="bg-[#0c1417] border-white/10 rounded-xl px-6 py-4 h-14 focus-visible:ring-zarco-cyan transition-colors"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Short Description (PT)
-                      </label>
-                      <Input
-                        value={formData.shortDescriptionPt}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            shortDescriptionPt: e.target.value,
-                          })
-                        }
-                        placeholder="Uma breve frase resumindo o projeto..."
-                        className="bg-[#0c1417] border-white/10 rounded-xl px-6 py-4 h-14 focus-visible:ring-zarco-cyan transition-colors"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid md:grid-cols-3 gap-8 pt-4">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        id="isActiveToggle"
-                        checked={formData.isActive}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            isActive: e.target.checked,
-                          })
-                        }
-                        className="w-5 h-5 bg-[#0c1417] border-white/10 rounded-md accent-zarco-cyan cursor-pointer"
-                      />
-                      <label
-                        htmlFor="isActiveToggle"
-                        className="text-[11px] font-bold uppercase tracking-widest text-white/40 cursor-pointer"
-                      >
-                        Live & Visible
-                      </label>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        id="isFeaturedToggle"
-                        checked={formData.isFeatured}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            isFeatured: e.target.checked,
-                          })
-                        }
-                        className="w-5 h-5 bg-[#0c1417] border-white/10 rounded-md accent-zarco-cyan cursor-pointer"
-                      />
-                      <label
-                        htmlFor="isFeaturedToggle"
-                        className="text-[11px] font-bold uppercase tracking-widest text-white/40 cursor-pointer"
-                      >
-                        Featured Project
-                      </label>
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase ml-1">
-                        Archive Year
-                      </label>
-                      <Input
-                        value={formData.year}
-                        onChange={(e) =>
-                          setFormData({ ...formData, year: e.target.value })
-                        }
-                        className="bg-[#0c1417] border-white/10 rounded-xl h-10 text-xs"
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Detailed Content */}
-              <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-10">
-                <CardHeader className="px-0 pt-0 mb-8 border-b border-white/5 pb-6">
-                  <CardTitle className="text-xl font-bold uppercase tracking-tight">
-                    Detailed Content
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-0 space-y-8">
-                  <div className="grid md:grid-cols-2 gap-8">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                          Full Description (EN)
-                        </label>
-                        <Code2 className="w-4 h-4 text-white/20" />
-                      </div>
-                      <textarea
-                        value={formData.fullDescription}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            fullDescription: e.target.value,
-                          })
-                        }
-                        placeholder="Describe the creative process, challenges, and solutions..."
-                        className="bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 min-h-[150px] focus:outline-none focus:border-zarco-cyan transition-colors resize-none text-white/70"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                          Full Description (PT)
-                        </label>
-                        <Code2 className="w-4 h-4 text-white/20" />
-                      </div>
-                      <textarea
-                        value={formData.fullDescriptionPt}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            fullDescriptionPt: e.target.value,
-                          })
-                        }
-                        placeholder="Descreva o processo criativo, desafios e soluções..."
-                        className="bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 min-h-[150px] focus:outline-none focus:border-zarco-cyan transition-colors resize-none text-white/70"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-8">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                          Client Goals & Outcomes (EN)
-                        </label>
-                        <Globe className="w-4 h-4 text-white/20" />
-                      </div>
-                      <textarea
-                        value={formData.goals}
-                        onChange={(e) =>
-                          setFormData({ ...formData, goals: e.target.value })
-                        }
-                        placeholder="What were the measurable results?"
-                        className="bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 min-h-[120px] focus:outline-none focus:border-zarco-cyan transition-colors resize-none text-white/70"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                          Objetivos e Resultados (PT)
-                        </label>
-                        <LangIcon className="w-4 h-4 text-white/20" />
-                      </div>
-                      <textarea
-                        value={formData.goalsPt}
-                        onChange={(e) =>
-                          setFormData({ ...formData, goalsPt: e.target.value })
-                        }
-                        placeholder="Quais foram os resultados mensuráveis?"
-                        className="bg-[#0c1417] border border-white/10 rounded-xl px-6 py-4 min-h-[120px] focus:outline-none focus:border-zarco-cyan transition-colors resize-none text-white/70"
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Media Assets */}
-              <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-10">
-                <CardHeader className="px-0 pt-0 mb-8 border-b border-white/5 pb-6 text-xl font-bold uppercase tracking-tight">
-                  <CardTitle>Media Assets</CardTitle>
-                </CardHeader>
-                <CardContent className="px-0 space-y-12">
-                  {/* Main Cover Image */}
-                  <div className="flex flex-col gap-4">
-                    <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                      Main Cover Image
-                    </label>
-                    <div className="grid md:grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                        <div
-                          className="aspect-video rounded-2xl border-2 border-dashed border-white/5 bg-[#0c1417] flex flex-col items-center justify-center gap-4 relative overflow-hidden group cursor-pointer hover:border-zarco-cyan/30 transition-all"
-                          onClick={() =>
-                            document.getElementById("mainImageInput")?.click()
-                          }
-                        >
-                          {uploading === "main" ? (
-                            <Loader2 className="w-8 h-8 text-zarco-cyan animate-spin" />
-                          ) : formData.image ? (
-                            <>
-                              <img
-                                src={formData.image}
-                                alt="Cover"
-                                className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
-                                <Upload className="w-8 h-8 text-white" />
-                                <span className="text-[10px] font-bold uppercase tracking-widest ml-2">
-                                  Replace Image
-                                </span>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center">
-                                <Upload className="w-6 h-6 text-white/20" />
-                              </div>
-                              <div className="text-center">
-                                <p className="text-[11px] font-bold uppercase tracking-widest mb-1">
-                                  Upload Main Cover
-                                </p>
-                                <p className="text-[9px] text-white/20 uppercase tracking-widest">
-                                  or click to browse assets
-                                </p>
-                              </div>
-                            </>
-                          )}
-                          <input
-                            id="mainImageInput"
-                            type="file"
-                            className="hidden"
-                            accept="image/*"
-                            onChange={(e) =>
-                              e.target.files?.[0] &&
-                              handleFileUpload(e.target.files[0], "main")
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-4">
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-white/20">
-                          Manually provide URL instead
-                        </p>
-                        <Input
-                          value={formData.image}
-                          onChange={(e) =>
-                            setFormData({ ...formData, image: e.target.value })
-                          }
-                          placeholder="Paste image link (Unsplash, etc.)"
-                          className="bg-[#0c1417] border-white/10 rounded-xl px-6 h-14 focus-visible:ring-zarco-cyan"
-                        />
-                        <p className="text-[10px] text-white/30 italic">
-                          High-res 1920x1080 recommended for best results on the
-                          platform.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Gallery Section */}
-                  <div className="flex flex-col gap-6 pt-8 border-t border-white/5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Gallery Images
-                      </label>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={addGalleryUrl}
-                          className="text-[10px] uppercase font-bold tracking-widest text-white/40 hover:text-white"
-                        >
-                          Add URL
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {formData.gallery.map((img, idx) => (
-                        <div
-                          key={idx}
-                          className="aspect-square rounded-2xl overflow-hidden bg-black relative group border border-white/5"
-                        >
-                          <img
-                            src={img}
-                            alt={`Gallery ${idx}`}
-                            className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                            referrerPolicy="no-referrer"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeGalleryImage(idx)}
-                            className="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-500/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-
-                      <div
-                        className="aspect-square rounded-2xl border-2 border-dashed border-white/5 bg-[#0c1417] flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-zarco-cyan/30 transition-all group"
-                        onClick={() =>
-                          document.getElementById("galleryInput")?.click()
-                        }
-                      >
-                        {uploading === "gallery" ? (
-                          <Loader2 className="w-6 h-6 text-zarco-cyan animate-spin" />
-                        ) : (
-                          <>
-                            <Plus className="w-5 h-5 text-white/20 group-hover:text-zarco-cyan transition-colors" />
-                            <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">
-                              Add Image
-                            </span>
-                          </>
-                        )}
-                        <input
-                          id="galleryInput"
-                          type="file"
-                          className="hidden"
-                          multiple
-                          accept="image/*"
-                          onChange={(e) => {
-                            if (e.target.files) {
-                              Array.from(e.target.files).forEach((file) =>
-                                handleFileUpload(file as File, "gallery"),
-                              );
-                            }
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* External Links & Tech Stack */}
-              <div className="grid md:grid-cols-2 gap-8">
-                <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-10">
-                  <CardHeader className="px-0 pt-0 mb-8 border-b border-white/5 pb-6">
-                    <CardTitle className="text-xl font-bold uppercase tracking-tight">
-                      External Links
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="px-0 space-y-6">
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Live URL
-                      </label>
-                      <div className="flex items-center gap-3 bg-[#0c1417] border border-white/10 rounded-xl px-4 overflow-hidden focus-within:border-zarco-cyan">
-                        <Globe className="w-4 h-4 text-white/20" />
-                        <Input
-                          value={formData.liveUrl}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              liveUrl: e.target.value,
-                            })
-                          }
-                          placeholder="https://www.project-domain.com"
-                          className="bg-transparent border-none focus-visible:ring-0 h-14"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <label className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">
-                        Repository (Optional)
-                      </label>
-                      <div className="flex items-center gap-3 bg-[#0c1417] border border-white/10 rounded-xl px-4 overflow-hidden focus-within:border-zarco-cyan">
-                        <Github className="w-4 h-4 text-white/20" />
-                        <Input
-                          value={formData.repoUrl}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              repoUrl: e.target.value,
-                            })
-                          }
-                          placeholder="github.com/zarcostudio/..."
-                          className="bg-transparent border-none focus-visible:ring-0 h-14"
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] p-10">
-                  <CardHeader className="px-0 pt-0 mb-8 border-b border-white/5 pb-6">
-                    <CardTitle className="text-xl font-bold uppercase tracking-tight">
-                      Tech Stack
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="px-0 space-y-6">
-                    {Object.entries(TECHNICAL_STACK).map(([category, techs]) => (
-                      <div key={category} className="space-y-2">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[#4fd1dc] block mb-2 opacity-80">
-                          {category.replace(/([A-Z])/g, ' $1').trim()}
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                          {techs.map((tech) => {
-                            const isSelected = formData.techStack.includes(tech);
-                            return (
-                              <button
-                                key={tech}
-                                type="button"
-                                onClick={() => toggleTech(tech)}
-                                className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all ${
-                                  isSelected
-                                    ? "bg-zarco-cyan text-black border-zarco-cyan shadow-[0_0_15px_rgba(79,209,220,0.3)]"
-                                    : "bg-white/5 border-white/10 text-white/40 hover:border-white/20"
-                                }`}
-                              >
-                                {tech}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="flex justify-end gap-4 pt-12">
-                <Button
-                  type="button"
-                  onClick={resetForm}
-                  variant="outline"
-                  className="bg-transparent border-white/10 text-white/60 font-bold uppercase tracking-widest text-[11px] rounded-xl px-12 py-8 hover:bg-white/5"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  className="bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] rounded-xl px-12 py-8 hover:bg-zarco-cyan/90 border-none transition-all shadow-[0_0_20px_rgba(79,209,220,0.3)] group"
-                >
-                  {view === "create" ? "Add Project" : "Save Changes"}
-                  <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Button>
-              </div>
-            </div>
-          </form>
-        )}
+        ) : null}
       </main>
 
       {showFeedbackModal && editingClientProject && (
