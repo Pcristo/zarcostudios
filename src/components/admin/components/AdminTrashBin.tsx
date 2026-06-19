@@ -13,6 +13,7 @@ interface AdminTrashBinProps {
   showAdminToast: (msg: string, type?: "success" | "error" | "warning") => void;
 }
 
+
 export function AdminTrashBin({
   trashItems,
   setTrashItems,
