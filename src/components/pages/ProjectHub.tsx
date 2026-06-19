@@ -15,7 +15,7 @@ import {
   ShieldCheck, 
   Send,
   ExternalLink,
-  DollarSign,
+  Euro,
   User,
   Phone,
   Mail,
@@ -138,6 +138,8 @@ interface ClientProject {
   subscriptionEnabled?: boolean;
   subscriptionPaid?: boolean;
   subscriptionPaidAt?: string;
+  subscriptionCancelled?: boolean;
+  subscriptionCancelledBy?: 'customer' | 'admin';
   subFeaturesSlack?: boolean;
   subFeaturesSecurity?: boolean;
   subFeaturesHosting?: boolean;
@@ -636,21 +638,25 @@ export function ProjectHub({ projectId }: { projectId: string }) {
       if (project) {
         const projRef = doc(db, 'clientProjects', projectId);
         await updateDoc(projRef, {
-          hasSubscription: false,
+          hasSubscription: true,
           subscriptionPaid: false,
+          subscriptionCancelled: true,
+          subscriptionCancelledBy: 'customer',
           subscriptionPaidAt: null,
           updatedAt: new Date()
         });
 
         setProject(prev => prev ? {
           ...prev,
-          hasSubscription: false,
+          hasSubscription: true,
           subscriptionPaid: false,
+          subscriptionCancelled: true,
+          subscriptionCancelledBy: 'customer',
           subscriptionPaidAt: undefined
         } : null);
       }
 
-      showToast(isPt ? 'Assinatura cancelada e removida com sucesso.' : 'Subscription cancelled and removed successfully.', 'info');
+      showToast(isPt ? 'Assinatura cancelada com sucesso.' : 'Subscription cancelled successfully.', 'info');
     } catch (err) {
       console.error('Error cancelling subscription:', err);
       showToast(isPt ? 'Erro ao cancelar assinatura.' : 'Failed to cancel subscription.', 'error');
@@ -1435,7 +1441,7 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-4 border-b border-white/5 pb-8 pt-6">
                     <div className="flex flex-col gap-1 text-left">
                       <div className="flex items-center gap-3">
-                        <DollarSign className="w-5 h-5 text-zarco-cyan" />
+                        <Euro className="w-5 h-5 text-zarco-cyan" />
                         <h3 className="text-2xl font-black uppercase tracking-tight text-white animate-fade-in">
                           {activeTab.title}
                         </h3>
@@ -1825,12 +1831,12 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                     </div>
 
                     <div className="space-y-1 border-r border-white/5 pr-4 pt-3 mt-3 border-t font-mono">
-                      <span className="text-white/30 uppercase block font-black">{isPt ? 'TRANSAÇÃO STRIPE' : 'STRIPE RECEIPT'}</span>
-                      <span className="text-white font-bold block break-all">{localStorage.getItem(`sub_txn_${project.id}`) || subTransactionId || "ch_stripe_active_04b4"}</span>
-                    </div>
-                    <div className="space-y-1 pl-4 pt-3 mt-3 border-t font-mono">
                       <span className="text-white/30 uppercase block font-black">{isPt ? 'ESTADO' : 'STATUS'}</span>
                       <span className="text-green-400 font-bold block uppercase tracking-widest">{isPt ? 'ATIVO' : 'ACTIVE'}</span>
+                    </div>
+                    <div className="space-y-1 pl-4 pt-3 mt-3 border-t font-mono">
+                      <span className="text-white/30 uppercase block font-black">{isPt ? 'ID DA TRANSAÇÃO' : 'TRANSACTION ID'}</span>
+                      <span className="text-white font-bold block break-all">{localStorage.getItem(`sub_txn_${project.id}`) || project.stripeSubscriptionId || subTransactionId || "ZAR-2026-SUB-00001"}</span>
                     </div>
                   </div>
 
@@ -1843,8 +1849,30 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                   </Button>
                 </div>
               ) : (
-                /* Subcription checkout interactive form area */
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                <>
+                  {project.subscriptionCancelled && (
+                    <div id="sub-canceled-banner" className="mb-8 p-6 bg-red-500/5 border border-red-500/20 rounded-3xl text-left flex items-start gap-3.5 animate-fade-in w-full">
+                      <span className="text-lg">⚠️</span>
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-red-400 block font-sans">
+                          {project.subscriptionCancelledBy === 'admin'
+                            ? (isPt ? 'Subscrição Cancelada por Zarco Studios' : 'Subscription Cancelled by Zarco Studios')
+                            : (isPt ? 'Subscrição Cancelada pelo Cliente' : 'Subscription Cancelled')}
+                        </span>
+                        <p className="text-[11px] text-white/50 leading-relaxed font-semibold uppercase tracking-wider font-mono">
+                          {project.subscriptionCancelledBy === 'admin'
+                            ? (isPt
+                              ? 'A sua assinatura foi cancelada pela Zarco Studios. Entre em contacto connosco para obter mais informações.'
+                              : 'Your subscription has been cancelled by Zarco Studios. Please contact us for more information.')
+                            : (isPt
+                              ? 'A sua assinatura de suporte recorrente foi cancelada. Pode reativar os serviços e benefícios a qualquer momento concluindo o checkout abaixo.'
+                              : 'Your recurring support subscription has been cancelled. You can reactivate services and benefits at any time by completing checkout below.')}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {/* Subcription checkout interactive form area */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                   
                   {/* Left Column: Plan Description & Details */}
                   <div className="lg:col-span-5 space-y-6">
@@ -1857,6 +1885,20 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                           ? 'Inclui suporte técnico especializado, otimização contínua de bases de dados, monitorização de sanidade do alojamento e intervenções visuais mensais prioritárias.' 
                           : 'Includes dedicated technical support, continuous performance updates, database integrity optimization, and prioritized monthly design cycles.')}
                       </p>
+
+                      {project.subscriptionCancelled && (
+                        <div className="p-4 rounded-2xl bg-red-500/[0.03] border border-red-500/15 font-mono text-[10px] space-y-1.5 animate-fade-in">
+                          <div className="text-red-400 font-extrabold uppercase tracking-widest flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                            {isPt ? "ESTADO: CANCELADA" : "STATUS: CANCELLED"}
+                          </div>
+                          <p className="text-white/50 text-[9px] leading-relaxed uppercase tracking-wider font-semibold">
+                            {project.subscriptionCancelledBy === 'admin'
+                              ? (isPt ? "Cancelada pela Administração (Zarco Studios)" : "Cancelled by Administration (Zarco Studios)")
+                              : (isPt ? "Cancelada pelo Cliente" : "Cancelled by Client")}
+                          </p>
+                        </div>
+                      )}
 
                        <div className="space-y-2.5 pt-4 border-t border-white/5">
                         {project.subscriptionFeatures && project.subscriptionFeatures.length > 0 ? (
@@ -2050,47 +2092,66 @@ export function ProjectHub({ projectId }: { projectId: string }) {
 
                         setSubIsProcessing(true);
                         try {
-                          // Simulate dynamic payment gateway delay (2 seconds)
-                          await new Promise(resolve => setTimeout(resolve, 2000));
-                          
-                          const hashId = `ch_stripe_${Math.random().toString(36).substring(2, 10)}`;
+                          let paidAtServerStr = new Date().toISOString();
+                          let finalTxnId = `ch_stripe_${Math.random().toString(36).substring(2, 10)}`;
+
+                          // Trigger live Stripe payment and DB alignment on server
+                          const apiResponse = await fetch('/api/subscriptions/confirm-payment', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              projectId: project.id,
+                              clientEmail: client?.email || contactEmail || "",
+                              clientName: client?.fullName || contactName || "",
+                              projectName: project.projectName || "",
+                              subscriptionTitle: project.subscriptionTitle || "",
+                              subscriptionPrice: project.subscriptionPrice || 0,
+                              subscriptionInterval: project.subscriptionInterval || "monthly",
+                              transactionId: finalTxnId, // fallback random identifier
+                              lang: isPt ? "pt" : "en",
+                              // Pass real card values for secure server-side Stripe processing
+                              cardNumber: subCardNumber,
+                              cardExpiry: subCardExpiry,
+                              cardCvc: subCardCvc,
+                              cardName: subCardName,
+                              cardPostal: subCardPostal
+                            }),
+                          });
+
+                          if (!apiResponse.ok) {
+                            const errorData = await apiResponse.json();
+                            throw new Error(errorData.error || errorData.detail || "Stripe transaction failed");
+                          }
+
+                          const resData = await apiResponse.json();
+                          if (resData.paidAt) {
+                            paidAtServerStr = resData.paidAt;
+                          }
+                          if (resData.transactionId) {
+                            finalTxnId = resData.transactionId;
+                          }
+
+                          // Save secure local storage keys
                           localStorage.setItem(`subscribed_${project.id}`, 'true');
-                          localStorage.setItem(`sub_txn_${project.id}`, hashId);
-                          setSubTransactionId(hashId);
+                          localStorage.setItem(`sub_txn_${project.id}`, finalTxnId);
+                          
+                          setSubTransactionId(finalTxnId);
                           setSubscriptionPaid(true);
 
-                          let paidAtServerStr = new Date().toISOString();
-
-                          // Trigger Payment Confirmation, DB status sync and detailed emails on backend
+                          // Sync Firestore state client-side using the client's working connection
                           try {
-                            const apiResponse = await fetch('/api/subscriptions/confirm-payment', {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                              },
-                              body: JSON.stringify({
-                                projectId: project.id,
-                                clientEmail: client?.email || contactEmail || "",
-                                clientName: client?.fullName || contactName || "",
-                                projectName: project.projectName || "",
-                                subscriptionTitle: project.subscriptionTitle || "",
-                                subscriptionPrice: project.subscriptionPrice || 0,
-                                subscriptionInterval: project.subscriptionInterval || "monthly",
-                                transactionId: hashId,
-                                lang: isPt ? "pt" : "en",
-                              }),
+                            const dbRef = doc(db, 'clientProjects', project.id);
+                            await updateDoc(dbRef, {
+                              subscriptionPaid: true,
+                              subscriptionPaidAt: paidAtServerStr,
+                              stripeSubscriptionId: finalTxnId,
+                              subscriptionCancelled: false
                             });
-
-                            if (apiResponse.ok) {
-                              const resData = await apiResponse.json();
-                              if (resData.paidAt) {
-                                paidAtServerStr = resData.paidAt;
-                              }
-                            } else {
-                              console.warn("Server subscription confirmation returned non-OK status");
-                            }
-                          } catch (apiErr) {
-                            console.error("API billing webhook execution failed:", apiErr);
+                            console.log("Client-side Firebase subscription state update succeeded.");
+                          } catch (dbErr) {
+                            console.error("Client-side Firebase subscription state update failed:", dbErr);
                           }
 
                           // Secure local/live client state for immediate visual response
@@ -2099,14 +2160,15 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                             return {
                               ...prev,
                               subscriptionPaid: true,
-                              subscriptionPaidAt: paidAtServerStr
+                              subscriptionPaidAt: paidAtServerStr,
+                              subscriptionCancelled: false
                             };
                           });
 
                           showToast(isPt ? 'Subscrição concluída com sucesso! E-mails enviados.' : 'Subscription activated successfully! Confirmation emails dispatched.', 'success');
-                        } catch (err) {
+                        } catch (err: any) {
                           console.error(err);
-                          setSubError(isPt ? "Transação recusada pela instituição financeira." : "Stripe processing failed. Try different credentials.");
+                          setSubError(isPt ? `Transação recusada: ${err.message || 'Erro de rede'}` : `Transaction declined: ${err.message || 'Network error'}`);
                         } finally {
                           setSubIsProcessing(false);
                         }
@@ -2126,7 +2188,7 @@ export function ProjectHub({ projectId }: { projectId: string }) {
                     </Button>
                   </div>
                 </div>
-              )}
+              </>)}
             </Card>
           </div>
         )}
@@ -3160,7 +3222,7 @@ export function ProjectHub({ projectId }: { projectId: string }) {
               <div className="flex border-b border-white/5 bg-[#0a1114] px-6 py-5 items-center justify-between sticky top-0 z-[140]">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-zarco-cyan/10 flex items-center justify-center border border-zarco-cyan/20">
-                    <DollarSign className="w-5 h-5 text-zarco-cyan" />
+                    <Euro className="w-5 h-5 text-zarco-cyan" />
                   </div>
                   <div>
                     <h3 className="text-lg font-black uppercase tracking-tight text-white leading-tight">

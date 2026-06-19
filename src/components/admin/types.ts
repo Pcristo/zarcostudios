@@ -296,10 +296,13 @@ export interface ClientProject {
   subscriptionEnabled?: boolean;
   subscriptionPaid?: boolean;
   subscriptionPaidAt?: string;
+  subscriptionCancelled?: boolean;
+  subscriptionCancelledBy?: 'customer' | 'admin';
   subFeaturesSlack?: boolean;
   subFeaturesSecurity?: boolean;
   subFeaturesHosting?: boolean;
   subscriptionFeatures?: string[];
+  subscriptionPaidCountPriorCancellation?: number | string;
   secondaryBudgetLines?: { item: string; description?: string; cost: number | string; isOptional?: boolean }[];
   secondaryCustomServices?: { id: string; item: string; description?: string; cost: number; isOptional?: boolean; quantity?: number; hours?: number; unitPrice?: number }[];
   secondaryDiscountPercent?: string | number;
@@ -345,6 +348,8 @@ export interface Invoice {
   showClientName?: boolean;
   showClientCompany?: boolean;
   notes?: string;
+  isSubscription?: boolean;
+  subscriptionMonth?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -524,3 +529,20 @@ export const getRenewalTheme = (expirationDate: string, isFree?: boolean) => {
 
   return "text-yellow-500 font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20 uppercase tracking-tighter font-black";
 };
+
+export interface FeedbackAlert {
+  id: string;
+  text: string;
+  createdAt: string;
+  project: ClientProject;
+}
+
+export interface ExpiringAsset {
+  projectId: string;
+  projectName: string;
+  assetName: string;
+  provider: string;
+  expirationDate: string;
+  isHost: boolean;
+  daysRemaining: number;
+}

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Card } from "@/components/ui/card";
-import { Trash2, RotateCcw, Loader2, Users, FolderRoot, Receipt } from "lucide-react";
+import { Trash2, RotateCcw, Loader2, Users, FolderRoot, Receipt, CreditCard } from "lucide-react";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { doc, deleteDoc } from "firebase/firestore";
 
@@ -21,7 +21,7 @@ export function AdminTrashBin({
   handlePermanentDelete,
   showAdminToast,
 }: AdminTrashBinProps) {
-  const [trashFilter, setTrashFilter] = useState<"all" | "client" | "project" | "bill">("all");
+  const [trashFilter, setTrashFilter] = useState<"all" | "client" | "project" | "bill" | "subscription">("all");
   const [trashConfirmingDelete, setTrashConfirmingDelete] = useState<string | null>(null);
   const [confirmingEmptyTrash, setConfirmingEmptyTrash] = useState(false);
 
@@ -114,6 +114,12 @@ export function AdminTrashBin({
         >
           Bills ({trashItems.filter(item => item.type === "bill").length})
         </button>
+        <button
+          onClick={() => setTrashFilter("subscription")}
+          className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${trashFilter === "subscription" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
+        >
+          Subscriptions ({trashItems.filter(item => item.type === "subscription").length})
+        </button>
       </div>
 
       {/* Deleted Items Listing */}
@@ -136,10 +142,12 @@ export function AdminTrashBin({
             .map((item) => {
               const iconColor = item.type === "client" ? "text-zarco-cyan bg-zarco-cyan/10 border-zarco-cyan/25" 
                               : item.type === "project" ? "text-zarco-purple bg-zarco-purple/10 border-zarco-purple/25" 
+                              : item.type === "subscription" ? "text-[#ec4899] bg-[#ec4899]/10 border-[#ec4899]/25"
                               : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
               
               const itemIcon = item.type === "client" ? <Users className="w-4 h-4" />
                              : item.type === "project" ? <FolderRoot className="w-4 h-4" />
+                             : item.type === "subscription" ? <CreditCard className="w-4 h-4" />
                              : <Receipt className="w-4 h-4" />;
 
               return (

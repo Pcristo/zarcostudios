@@ -31,7 +31,7 @@ import {
   LayoutDashboard,
   LogOut,
   Star,
-  DollarSign,
+  Euro,
   Percent,
   AlertCircle,
   Calculator,
@@ -83,6 +83,11 @@ import { AdminSettings } from "./components/AdminSettings";
 import { AdminReviews } from "./components/AdminReviews";
 import { AdminPricing } from "./components/AdminPricing";
 import { AdminPortfolio } from "./components/AdminPortfolio";
+import { AdminSubscriptions } from "./components/AdminSubscriptions";
+import { AdminSubscribers } from "./components/AdminSubscribers";
+import { AdminAttentionRequired } from "./components/AdminAttentionRequired";
+import { AdminStatsGrid } from "./components/AdminStatsGrid";
+import { AdminQuickNav } from "./components/AdminQuickNav";
 
 const INDUSTRIES = [
   "Information & Communication",
@@ -425,6 +430,8 @@ interface Invoice {
   showClientName?: boolean;
   showClientCompany?: boolean;
   notes?: string;
+  isSubscription?: boolean;
+  subscriptionMonth?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -520,7 +527,7 @@ type AdminView =
 export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("list");
   const [subSearchQuery, setSubSearchQuery] = useState("");
-  const [subFilterStatus, setSubFilterStatus] = useState<"all" | "active" | "pending">("all");
+  const [subFilterStatus, setSubFilterStatus] = useState<"all" | "active" | "pending" | "cancelled">("all");
   
   interface AdminToast {
     id: string;
@@ -598,6 +605,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [seenExpiringAssetIds, setSeenExpiringAssetIds] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("zarco_seen_expiring_asset_ids") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [seenSubscriptionSignatures, setSeenSubscriptionSignatures] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("zarco_seen_subscription_signatures") || "[]");
     } catch {
       return [];
     }
@@ -762,6 +776,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [savingInvoice, setSavingInvoice] = useState(false);
   const [adminProjectSearch, setAdminProjectSearch] = useState("");
   const [adminBillingSearch, setAdminBillingSearch] = useState("");
+  const [billingTypeFilter, setBillingTypeFilter] = useState<"all" | "subscription" | "project">("all");
   const [adminClientProjectSearch, setAdminClientProjectSearch] = useState("");
 
   // Trash Bin / Recycle Bin State
@@ -1001,6 +1016,23 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       }
     }
   }, [view, reviews]);
+
+  useEffect(() => {
+    if (view === "subscriptions-view" && clientProjects.length > 0) {
+      const currentSignatures = clientProjects
+        .filter(p => p.hasSubscription && (p.subscriptionPaid || p.subscriptionCancelled))
+        .map(p => `${p.id}_${p.subscriptionPaid ? 'paid' : 'unpaid'}_${p.subscriptionCancelled ? 'cancelled' : 'active'}`);
+      
+      if (currentSignatures.length > 0) {
+        const hasUnseen = currentSignatures.some(sig => !seenSubscriptionSignatures.includes(sig));
+        if (hasUnseen) {
+          const updated = Array.from(new Set([...seenSubscriptionSignatures, ...currentSignatures]));
+          setSeenSubscriptionSignatures(updated);
+          localStorage.setItem("zarco_seen_subscription_signatures", JSON.stringify(updated));
+        }
+      }
+    }
+  }, [view, clientProjects, seenSubscriptionSignatures]);
 
   useEffect(() => {
     if (editingClientProject) {
@@ -1804,7 +1836,24 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   async function handleRestoreTrashItem(item: any) {
     try {
-      await setDoc(doc(db, item.originalCollection, item.originalId), item.data);
+      if (item.type === "subscription") {
+        await updateDoc(doc(db, "clientProjects", item.originalId), {
+          hasSubscription: item.data.hasSubscription ?? true,
+          subscriptionTitle: item.data.subscriptionTitle || null,
+          subscriptionDescription: item.data.subscriptionDescription || null,
+          subscriptionInterval: item.data.subscriptionInterval || "monthly",
+          subscriptionPrice: item.data.subscriptionPrice || 0,
+          subscriptionEnabled: item.data.subscriptionEnabled ?? true,
+          subscriptionPaid: item.data.subscriptionPaid ?? false,
+          subscriptionPaidAt: item.data.subscriptionPaidAt || null,
+          subscriptionCancelled: item.data.subscriptionCancelled ?? false,
+          subscriptionCancelledBy: item.data.subscriptionCancelledBy || null,
+          subscriptionFeatures: item.data.subscriptionFeatures || [],
+          updatedAt: new Date(),
+        });
+      } else {
+        await setDoc(doc(db, item.originalCollection, item.originalId), item.data);
+      }
       await deleteDoc(doc(db, "trash", item.id));
       setTrashItems(prev => prev.filter(t => t.id !== item.id));
       
@@ -2367,6 +2416,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       showClientVat: true,
       showClientName: true,
       showClientCompany: true,
+      isSubscription: true,
+      subscriptionMonth: new Date().toLocaleString("en-US", { month: "long" }),
     });
     setView("billing-form");
   };
@@ -2440,7 +2491,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           originalId: id,
           type: "bill",
           name: item.invoiceNumber || "Unnamed Invoice",
-          details: item.amount ? `$${item.amount}` : "",
+          details: item.amount ? `€${item.amount}` : "",
           deletedAt: new Date().toISOString(),
           originalCollection: "invoices",
           data: item
@@ -3104,6 +3155,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const projectId = projectData.id;
       delete (projectData as any).id;
 
+      // Clean up any undefined properties to prevent Firestore serialization errors
+      Object.keys(projectData).forEach((key) => {
+        if ((projectData as any)[key] === undefined) {
+          delete (projectData as any)[key];
+        }
+      });
+
       if (isNew) {
         await addDoc(collection(db, "clientProjects"), {
           ...projectData,
@@ -3545,14 +3603,14 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       }
     };
 
-    if (proj.domainName) {
-      checkExpiring(proj.domainName, proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration, false);
+    if (proj.domainName || proj.domainExpiration) {
+      checkExpiring(proj.domainName || "Primary Domain", proj.domainExpiration, proj.isHostingFree, proj.showDomainExpiration, false);
     }
 
     if (proj.hosts) {
       proj.hosts.forEach((h) => {
-        if (h.domainName) {
-          checkExpiring(h.domainName, h.domainExpiration, h.isHostingFree, h.showDomainExpiration, true);
+        if (h.domainName || h.domainExpiration) {
+          checkExpiring(h.domainName || "Host Asset", h.domainExpiration, h.isHostingFree, h.showDomainExpiration, true);
         }
       });
     }
@@ -3565,10 +3623,19 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     return !seenExpiringAssetIds.includes(assetId);
   });
 
+  const unreadSubscriptions = clientProjects.filter(p => {
+    if (!p.hasSubscription) return false;
+    if (!p.subscriptionPaid && !p.subscriptionCancelled) return false;
+    const signature = `${p.id}_${p.subscriptionPaid ? 'paid' : 'unpaid'}_${p.subscriptionCancelled ? 'cancelled' : 'active'}`;
+    return !seenSubscriptionSignatures.includes(signature);
+  });
+
   const newReviewsCount = unreadReviews.length;
   const newFeedbackCount = unreadFeedbacks.length;
   const expiringAssetsCount = unreadExpiringAssets.length;
-  const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0 || expiringAssetsCount > 0;
+  const newSubscriptionsCount = unreadSubscriptions.length;
+  const hasExpiringSoonAsset = expiringAssets.length > 0;
+  const hasAlerts = newReviewsCount > 0 || newFeedbackCount > 0 || expiringAssetsCount > 0 || newSubscriptionsCount > 0;
 
   const filteredProjects = projects.filter((project) => {
     if (!adminProjectSearch.trim()) return true;
@@ -3584,6 +3651,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   });
 
   const filteredInvoices = invoices.filter((invoice) => {
+    if (billingTypeFilter === "subscription" && !invoice.isSubscription) return false;
+    if (billingTypeFilter === "project" && invoice.isSubscription) return false;
+
     if (!adminBillingSearch.trim()) return true;
     const queryStr = adminBillingSearch.toLowerCase().trim();
     const client = clients.find((c) => c.id === invoice.clientId);
@@ -3619,6 +3689,19 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       companyName.toLowerCase().includes(queryStr) ||
       year.toLowerCase().includes(queryStr)
     );
+  });
+
+  const filteredAnalyticsInvoices = invoices.filter((inv) => {
+    const d = new Date(inv.issueDate);
+    const matchesYear = d.getFullYear().toString() === analyticsYear;
+    const matchesMonth =
+      analyticsMonth === "All" ||
+      d.toLocaleString("en-US", { month: "long" }) === analyticsMonth;
+
+    if (!matchesYear || !matchesMonth) return false;
+    if (billingTypeFilter === "subscription" && !inv.isSubscription) return false;
+    if (billingTypeFilter === "project" && inv.isSubscription) return false;
+    return true;
   });
 
   return (
@@ -3741,8 +3824,8 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           >
             <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
             <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Projects</span>
-            {(newFeedbackCount > 0 || expiringAssetsCount > 0) && (
-              <span className={`ml-auto relative ${isSidebarOpen ? 'flex h-2.5 w-2.5' : 'max-[900px]:absolute max-[900px]:top-1 max-[900px]:right-1 flex h-2 w-2'}`}>
+            {(hasExpiringSoonAsset || newFeedbackCount > 0 || expiringAssetsCount > 0) && (
+              <span className={`ml-auto relative ${isSidebarOpen ? 'flex h-2.5 w-2.5' : 'max-[900px]:absolute max-[900px]:top-1 max-[900px]:right-1 flex h-2 w-2'}`} title="Has assets expiring in less than 30 days or unread items">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-full w-full bg-red-500"></span>
               </span>
@@ -3781,10 +3864,16 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               setView("subscriptions-view");
               setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all max-[900px]:gap-0 max-[900px]:justify-center ${isSidebarOpen ? 'max-[900px]:gap-3 max-[900px]:px-4 max-[900px]:justify-start' : 'max-[900px]:px-0'} ${view === "subscriptions-view" ? "bg-zarco-cyan/10 text-zarco-cyan border border-zarco-cyan/20" : "text-white/40 hover:text-white hover:bg-white/5"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all relative max-[900px]:gap-0 max-[900px]:justify-center ${isSidebarOpen ? 'max-[900px]:gap-3 max-[900px]:px-4 max-[900px]:justify-start' : 'max-[900px]:px-0'} ${view === "subscriptions-view" ? "bg-zarco-cyan/10 text-zarco-cyan border border-zarco-cyan/20" : "text-white/40 hover:text-white hover:bg-white/5"}`}
           >
             <CreditCard className="w-5 h-5 flex-shrink-0" />
             <span className={`text-[13px] font-bold ${isSidebarOpen ? '' : 'max-[900px]:hidden'}`}>Subscriptions</span>
+            {newSubscriptionsCount > 0 && (
+              <span className={`ml-auto relative ${isSidebarOpen ? 'flex h-2.5 w-2.5' : 'max-[900px]:absolute max-[900px]:top-1 max-[900px]:right-1 flex h-2 w-2'}`}>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-full w-full bg-red-500"></span>
+              </span>
+            )}
           </button>
           <button
             onClick={() => {
@@ -3878,1166 +3967,93 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               </div>
             </header>
 
-            {hasAlerts && (
-              <Card className="bg-red-500/[0.01] border border-red-500/15 rounded-[2rem] p-8 flex flex-col gap-6 relative overflow-hidden">
-                <span className="absolute -top-12 -left-12 w-32 h-32 rounded-full bg-red-500/5 blur-2xl" />
+            <AdminAttentionRequired
+              newReviewsCount={newReviewsCount}
+              newFeedbackCount={newFeedbackCount}
+              expiringAssetsCount={expiringAssetsCount}
+              unreadReviews={unreadReviews}
+              unreadFeedbacks={unreadFeedbacks}
+              unreadExpiringAssets={unreadExpiringAssets}
+              seenReviewIds={seenReviewIds}
+              setSeenReviewIds={setSeenReviewIds}
+              seenFeedbackIds={seenFeedbackIds}
+              setSeenFeedbackIds={setSeenFeedbackIds}
+              seenExpiringAssetIds={seenExpiringAssetIds}
+              setSeenExpiringAssetIds={setSeenExpiringAssetIds}
+              clientProjects={clientProjects}
+              setView={setView}
+              setEditingClientProject={setEditingClientProject}
+            />
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/[0.05] pb-4 relative z-10">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-2.5 w-2.5 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                    </span>
-                    <h2 className="text-lg font-black uppercase tracking-wider text-white">
-                      Attention Required ({newReviewsCount + newFeedbackCount + expiringAssetsCount} New Alerts)
-                    </h2>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Mark all unread reviews as seen
-                        const reviewIds = unreadReviews.map(r => r.id);
-                        if (reviewIds.length > 0) {
-                          const updated = Array.from(new Set([...seenReviewIds, ...reviewIds]));
-                          setSeenReviewIds(updated);
-                          localStorage.setItem("zarco_seen_review_ids", JSON.stringify(updated));
-                        }
-                        // Mark all unread feedbacks as seen
-                        const fbIds = unreadFeedbacks.map(fb => fb.id);
-                        if (fbIds.length > 0) {
-                          const updated = Array.from(new Set([...seenFeedbackIds, ...fbIds]));
-                          setSeenFeedbackIds(updated);
-                          localStorage.setItem("zarco_seen_feedback_ids", JSON.stringify(updated));
-                        }
-                        // Mark all unread expiring assets as seen
-                        const expiringIds = unreadExpiringAssets.map(asset => `${asset.projectId}-${asset.assetName}`);
-                        if (expiringIds.length > 0) {
-                          const updated = Array.from(new Set([...seenExpiringAssetIds, ...expiringIds]));
-                          setSeenExpiringAssetIds(updated);
-                          localStorage.setItem("zarco_seen_expiring_asset_ids", JSON.stringify(updated));
-                        }
-                      }}
-                      className="px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
-                    >
-                      Acknowledge All
-                    </button>
-                  </div>
-                </div>
+            <AdminStatsGrid
+              projectsCount={clientProjects.length}
+              clientProjectsCount={clientProjects.filter((p) => !p.status || (p.status.toLowerCase() !== 'completed' && p.status.toLowerCase() !== 'cancelled')).length}
+              clientsCount={clients.length}
+              invoicesCount={invoices.length}
+            />
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
-                  {/* Unapproved Reviews segment */}
-                  {unreadReviews.length > 0 && (
-                    <div className="space-y-3">
-                      <div className="text-[10px] uppercase font-black tracking-widest text-[#4fd1dc] flex items-center gap-2">
-                        <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                        Pending Public Testimonials ({unreadReviews.length})
-                      </div>
-                      <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        {unreadReviews.map(r => (
-                          <div key={r.id} className="p-4 rounded-2xl bg-[#0a1114]/80 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="text-left">
-                              <span className="text-xs font-bold text-white block uppercase tracking-wider text-left">{r.name}</span>
-                              <span className="text-[9px] font-mono text-white/40 block mt-0.5 uppercase tracking-widest text-left">{r.companyName}</span>
-                              <p className="text-[11px] text-white/50 italic mt-1 line-clamp-1 text-left">"{r.reviewTextEn || r.reviewTextPt}"</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setView("reviews-list");
-                                }}
-                                className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-zarco-cyan/15 text-zarco-cyan border border-zarco-cyan/25 hover:bg-zarco-cyan hover:text-black transition-all cursor-pointer"
-                              >
-                                Manage
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = [...seenReviewIds, r.id];
-                                  setSeenReviewIds(updated);
-                                  localStorage.setItem("zarco_seen_review_ids", JSON.stringify(updated));
-                                }}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 text-white/40 border border-white/5 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-                                title="Dismiss alert"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Unread Client Feedbacks segment */}
-                  {unreadFeedbacks.length > 0 && (
-                    <div className="space-y-3">
-                      <div className="text-[10px] uppercase font-black tracking-widest text-[#4fd1dc] flex items-center gap-2">
-                        <MessageSquare className="w-3.5 h-3.5 text-zarco-cyan" />
-                        New Customer Feedback Logs ({unreadFeedbacks.length})
-                      </div>
-                      <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        {unreadFeedbacks.map(fb => (
-                          <div key={fb.id} className="p-4 rounded-2xl bg-[#0a1114]/80 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="text-left">
-                              <span className="text-xs font-bold text-white block uppercase tracking-wider text-left">{fb.project.projectName}</span>
-                              <span className="text-[9px] font-mono text-white/50 block mt-0.5 uppercase tracking-widest text-left">
-                                {fb.createdAt ? new Date(fb.createdAt).toLocaleDateString() : "Recent"}
-                              </span>
-                              <p className="text-[11px] text-white/40 italic mt-1 line-clamp-1 text-left">"{fb.text}"</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingClientProject(fb.project);
-                                  setView("client-project-form");
-                                }}
-                                className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-zarco-cyan/15 text-zarco-cyan border border-zarco-cyan/25 hover:bg-zarco-cyan hover:text-black transition-all cursor-pointer"
-                              >
-                                Inspect
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = [...seenFeedbackIds, fb.id];
-                                  setSeenFeedbackIds(updated);
-                                  localStorage.setItem("zarco_seen_feedback_ids", JSON.stringify(updated));
-                                }}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 text-white/40 border border-white/5 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-                                title="Dismiss alert"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Expiring Domains/Assets segment */}
-                  {unreadExpiringAssets.length > 0 && (
-                    <div className="space-y-3 col-span-1 lg:col-span-2 border-t border-white/[0.05] pt-6 first:border-0 first:pt-0">
-                      <div className="text-[10px] uppercase font-black tracking-widest text-[#ef4444] flex items-center gap-2">
-                        <Globe className="w-3.5 h-3.5 animate-pulse text-red-500" />
-                        Expiring Managed Assets / Domains ({unreadExpiringAssets.length})
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        {unreadExpiringAssets.map((asset, idx) => {
-                          const proj = clientProjects.find(p => p.id === asset.projectId);
-                          return (
-                            <div key={idx} className="p-4 rounded-2xl bg-[#0a1114]/80 border border-red-500/10 hover:border-red-500/25 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <div className="text-left flex items-start gap-2.5">
-                                <span className="flex h-2 w-2 relative mt-1 flex-shrink-0">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                                </span>
-                                <div className="text-left">
-                                  <span className="text-xs font-bold text-white block uppercase tracking-wider text-left max-w-[200px] truncate" title={asset.assetName}>
-                                    {asset.assetName}
-                                  </span>
-                                  <span className="text-[9px] font-mono text-white/50 block mt-0.5 uppercase tracking-widest text-left">
-                                    Project: {asset.projectName}
-                                  </span>
-                                  <span className={`text-[10px] font-bold block mt-1 uppercase ${asset.daysRemaining <= 0 ? 'text-red-500 font-black' : asset.daysRemaining <= 7 ? 'text-red-400' : 'text-yellow-500'}`}>
-                                    {asset.daysRemaining < 0 
-                                      ? `Expired ${Math.abs(asset.daysRemaining)} Days Ago!` 
-                                      : asset.daysRemaining === 0 
-                                        ? "Expires Today!" 
-                                        : `Expires in ${asset.daysRemaining} Days (${new Date(asset.expirationDate).toLocaleDateString()})`}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (proj) {
-                                      setEditingClientProject(proj);
-                                      setView("client-project-form");
-                                    }
-                                  }}
-                                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-red-500/15 text-red-400 border border-red-500/25 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
-                                >
-                                  Manage Asset
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const assetId = `${asset.projectId}-${asset.assetName}`;
-                                    const updated = [...seenExpiringAssetIds, assetId];
-                                    setSeenExpiringAssetIds(updated);
-                                    localStorage.setItem("zarco_seen_expiring_asset_ids", JSON.stringify(updated));
-                                  }}
-                                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 text-white/40 border border-white/5 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-                                  title="Dismiss alert"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="bg-[#0a1114] border-white/5 rounded-[2.5rem] p-10 relative overflow-hidden group hover:border-white/10 transition-all">
-                <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <FolderRoot className="w-24 h-24" />
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 rounded-2xl bg-zarco-cyan/10 flex items-center justify-center mb-8">
-                    <FolderRoot className="w-6 h-6 text-zarco-cyan" />
-                  </div>
-                  <h3 className="text-4xl font-black text-white tracking-tighter">
-                    {projects.length}
-                  </h3>
-                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mt-2">
-                    Total Portfolio Projects
-                  </p>
-                </div>
-              </Card>
-
-              <Card className="bg-[#0a1114] border-white/5 rounded-[2.5rem] p-10 relative overflow-hidden group hover:border-white/10 transition-all">
-                <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <LayoutDashboard className="w-24 h-24" />
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 rounded-2xl bg-zarco-cyan/10 flex items-center justify-center mb-8">
-                    <LayoutDashboard className="w-6 h-6 text-zarco-cyan" />
-                  </div>
-                  <h3 className="text-4xl font-black text-white tracking-tighter">
-                    {clientProjects.length}
-                  </h3>
-                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mt-2">
-                    Managed Client Deliveries
-                  </p>
-                </div>
-              </Card>
-
-              <Card className="bg-[#0a1114] border-white/5 rounded-[2.5rem] p-10 relative overflow-hidden group hover:border-white/10 transition-all">
-                <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <Users className="w-24 h-24" />
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 rounded-2xl bg-zarco-cyan/10 flex items-center justify-center mb-8">
-                    <Users className="w-6 h-6 text-zarco-cyan" />
-                  </div>
-                  <h3 className="text-4xl font-black text-white tracking-tighter">
-                    {clients.length}
-                  </h3>
-                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mt-2">
-                    Onboarded Elite Clients
-                  </p>
-                </div>
-              </Card>
-
-              <Card className="bg-[#0a1114] border-white/5 rounded-[2.5rem] p-10 relative overflow-hidden group hover:border-white/10 transition-all">
-                <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <Receipt className="w-24 h-24" />
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 rounded-2xl bg-zarco-cyan/10 flex items-center justify-center mb-8">
-                    <Receipt className="w-6 h-6 text-zarco-cyan" />
-                  </div>
-                  <h3 className="text-4xl font-black text-white tracking-tighter">
-                    {invoices.length}
-                  </h3>
-                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mt-2">
-                    Financial Statements
-                  </p>
-                </div>
-              </Card>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <section className="space-y-6">
-                <h2 className="text-2xl font-black text-white uppercase tracking-tight ml-2">Quick Navigation</h2>
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { label: "Portfolio", icon: FolderRoot, view: "portfolio-list" },
-                    { label: "Clients", icon: Users, view: "clients-list" },
-                    { label: "Billing", icon: Receipt, view: "billing-list" },
-                    { label: "Settings", icon: Settings, view: "settings" }
-                  ].map((item) => (
-                    <button
-                      key={item.label}
-                      onClick={() => setView(item.view as any)}
-                      className="group p-8 bg-white/[0.02] border border-white/5 rounded-3xl hover:border-zarco-cyan/20 hover:bg-zarco-cyan/5 transition-all text-left"
-                    >
-                      <item.icon className="w-6 h-6 text-white/20 group-hover:text-zarco-cyan transition-colors mb-4" />
-                      <span className="block text-sm font-black text-white/40 group-hover:text-white uppercase tracking-widest leading-none">{item.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section className="space-y-6">
-                <h2 className="text-2xl font-black text-white uppercase tracking-tight ml-2">Service Status</h2>
-                <div className="space-y-4">
-                  {[
-                    { label: "Pricing List", status: pricingSettings.showSection, toggle: togglePricingSection },
-                    { label: "Subscribers", status: newsletterSettings.showSection, toggle: toggleNewsletterSection },
-                    { label: "Client Reviews", status: testimonialsSettings.showSection, toggle: toggleTestimonialsSection }
-                  ].map((item) => (
-                    <div key={item.label} className="p-6 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:border-white/10 transition-colors">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${item.status ? "bg-green-500/10" : "bg-red-500/10"}`}>
-                          {item.status ? <Eye className="w-5 h-5 text-green-500" /> : <EyeOff className="w-5 h-5 text-red-500" />}
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider leading-none mb-1">{item.label}</h4>
-                          <p className={`text-[9px] font-bold uppercase tracking-widest ${item.status ? "text-green-500/60" : "text-red-500/60"}`}>
-                            {item.status ? "Publicly Visible" : "Hidden from Users"}
-                          </p>
-                        </div>
-                      </div>
-                      <Button
-                        onClick={() => item.toggle(item.status)}
-                        className={`h-9 px-6 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${
-                          item.status 
-                            ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white" 
-                            : "bg-green-500/10 text-green-500 border border-green-500/20 hover:bg-green-500 hover:text-white"
-                        }`}
-                      >
-                        {item.status ? "Disable" : "Enable"}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+            <AdminQuickNav
+              setView={setView}
+              pricingSettings={pricingSettings}
+              newsletterSettings={newsletterSettings}
+              testimonialsSettings={testimonialsSettings}
+              togglePricingSection={togglePricingSection}
+              toggleNewsletterSection={toggleNewsletterSection}
+              toggleTestimonialsSection={toggleTestimonialsSection}
+            />
           </div>
         ) : view === "subscriptions-view" ? (
-          <div className="max-w-6xl mx-auto space-y-8 animate-fade-in text-left">
-            {/* Header section */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-4">
-              <div className="space-y-4">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zarco-cyan/10 border border-zarco-cyan/20">
-                  <CreditCard className="w-3 h-3 text-zarco-cyan" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-zarco-cyan">Recurring Billing</span>
-                </div>
-                <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-                  Project <span className="text-zarco-cyan">Subscriptions</span>
-                </h1>
-                <p className="text-white/40 font-medium max-w-md">
-                  Manage active recurring support and maintenance plans linked to projects and customers.
-                </p>
-              </div>
-            </div>
-
-            {/* Quick Stats Bento Cards */}
-            {(() => {
-              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
-              const activeSubsCount = subscriptionProjects.filter(p => p.subscriptionPaid).length;
-              const totalSubsCount = subscriptionProjects.length;
-
-              const estMRR = subscriptionProjects
-                .filter(p => p.subscriptionPaid)
-                .reduce((sum, p) => {
-                  const price = Number(p.subscriptionPrice || 0);
-                  if (p.subscriptionInterval === "yearly") {
-                    return sum + (price / 12);
-                  }
-                  return sum + price;
-                }, 0);
-
-              const estARR = estMRR * 12;
-
-              return (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Active Subscriptions</span>
-                      <span className="text-3xl font-black text-zarco-cyan block">{activeSubsCount} <span className="text-xs text-white/40 font-normal">/ {totalSubsCount} total</span></span>
-                    </div>
-                  </Card>
-                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Est. Monthly Revenue (MRR)</span>
-                      <span className="text-3xl font-black text-green-400 block">€{estMRR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </Card>
-                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Est. Annual Revenue (ARR)</span>
-                      <span className="text-3xl font-black text-white block">€{estARR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </Card>
-                  <Card className="bg-[#080d0f] border-white/5 p-6 rounded-3xl flex flex-col justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-2">Collection Rate</span>
-                      <span className="text-3xl font-black text-white/90 block">
-                        {totalSubsCount > 0 ? Math.round((activeSubsCount / totalSubsCount) * 100) : 0}%
-                      </span>
-                    </div>
-                  </Card>
-                </div>
-              );
-            })()}
-
-            {/* Filters bar */}
-            {(() => {
-              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
-              const totalSubsCount = subscriptionProjects.length;
-              const activeSubsCount = subscriptionProjects.filter(p => p.subscriptionPaid).length;
-
-              return (
-                <div className="flex flex-col sm:flex-row gap-4 items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                  <div className="relative w-full sm:max-w-xs">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                    <Input
-                      placeholder="Search project or customer..."
-                      value={subSearchQuery}
-                      onChange={(e) => setSubSearchQuery(e.target.value)}
-                      className="pl-10 h-10 bg-black/40 border-white/5 hover:border-white/10 rounded-xl text-xs uppercase tracking-wider text-white font-bold"
-                    />
-                  </div>
-
-                  <div className="flex gap-2 p-1 bg-black/40 rounded-xl">
-                    <button
-                      onClick={() => setSubFilterStatus("all")}
-                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "all" ? "bg-white/10 text-white shadow-md border border-white/5" : "text-white/40 hover:text-white"}`}
-                    >
-                      All ({totalSubsCount})
-                    </button>
-                    <button
-                      onClick={() => setSubFilterStatus("active")}
-                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "active" ? "bg-green-500/10 text-green-400 shadow-md border border-green-500/10" : "text-white/40 hover:text-white"}`}
-                    >
-                      Active ({activeSubsCount})
-                    </button>
-                    <button
-                      onClick={() => setSubFilterStatus("pending")}
-                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${subFilterStatus === "pending" ? "bg-orange-500/10 text-orange-400 shadow-md border border-orange-500/10" : "text-white/40 hover:text-white"}`}
-                    >
-                      Pending ({totalSubsCount - activeSubsCount})
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* List */}
-            {(() => {
-              const subscriptionProjects = clientProjects.filter(p => p.hasSubscription);
-              const filteredSubs = subscriptionProjects.filter(p => {
-                const clientObj = clients.find(c => c.id === p.clientId);
-                const searchLower = subSearchQuery.toLowerCase();
-                
-                const matchesSearch = 
-                  p.projectName.toLowerCase().includes(searchLower) ||
-                  (p.subscriptionTitle || "").toLowerCase().includes(searchLower) ||
-                  (clientObj?.fullName || "").toLowerCase().includes(searchLower) ||
-                  (clientObj?.email || "").toLowerCase().includes(searchLower) ||
-                  (clientObj?.companyName || "").toLowerCase().includes(searchLower);
-
-                const matchesStatus = 
-                  subFilterStatus === "all" ||
-                  (subFilterStatus === "active" && p.subscriptionPaid) ||
-                  (subFilterStatus === "pending" && !p.subscriptionPaid);
-
-                return matchesSearch && matchesStatus;
-              });
-
-              if (filteredSubs.length === 0) {
-                return (
-                  <Card className="bg-[#080d0f] border-white/5 rounded-3xl p-16 text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-6">
-                      <CreditCard className="w-8 h-8 text-white/20" />
-                    </div>
-                    <h3 className="text-lg font-bold text-white uppercase tracking-tight mb-2">No Subscriptions Found</h3>
-                    <p className="text-white/40 text-xs font-semibold max-w-sm mx-auto uppercase tracking-wider">
-                      No subscriptions match your search or filter status. Configure support subscriptions in your projects under Project Management.
-                    </p>
-                  </Card>
-                );
-              }
-
-              return (
-                <div className="space-y-4">
-                  {filteredSubs.map(proj => {
-                    const clientObj = clients.find(c => c.id === proj.clientId);
-                    const nextRenewal = () => {
-                      const paidAt = proj.subscriptionPaidAt ? new Date(proj.subscriptionPaidAt) : new Date();
-                      if (proj.subscriptionInterval === "yearly") {
-                        paidAt.setFullYear(paidAt.getFullYear() + 1);
-                      } else {
-                        paidAt.setMonth(paidAt.getMonth() + 1);
-                      }
-                      return paidAt.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-                    };
-
-                    return (
-                      <Card key={proj.id} className="bg-[#080d0f] border border-white/5 rounded-3xl p-6 md:p-8 hover:border-white/10 transition-all text-left">
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-                          
-                          {/* 1. Project & Client Info */}
-                          <div className="lg:col-span-4 space-y-3">
-                            <div>
-                              <span className="text-[8px] font-black uppercase tracking-widest text-[#4fd1dc] bg-[#4fd1dc]/10 border border-[#4fd1dc]/20 px-2 py-0.5 rounded-full inline-block mb-1.5">
-                                {proj.projectType}
-                              </span>
-                              <h3 className="text-lg font-black text-white hover:text-zarco-cyan cursor-pointer transition-colors" onClick={() => {
-                                setEditingClientProject(proj);
-                                setView("client-project-form");
-                              }}>
-                                {proj.projectName}
-                              </h3>
-                            </div>
-                            
-                            <div className="p-3 bg-black/40 border border-white/5 rounded-2xl space-y-1.5">
-                              <span className="text-[8px] font-black text-white/30 uppercase tracking-widest block">Customer Info</span>
-                              {clientObj ? (
-                                <div className="text-xs space-y-1 font-bold">
-                                  <span className="text-white block uppercase tracking-tight">{clientObj.fullName}</span>
-                                  {clientObj.companyName && (
-                                    <span className="text-white/60 block text-[10px] uppercase tracking-wider">{clientObj.companyName}</span>
-                                  )}
-                                  <span className="text-[#4fd1dc]/80 text-[10px] block font-mono tracking-normal">{clientObj.email}</span>
-                                </div>
-                              ) : (
-                                <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">No Client Linked</span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* 2. Subscription Details */}
-                          <div className="lg:col-span-3 space-y-4">
-                            <div>
-                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Plan Title</span>
-                              <span className="text-sm font-bold text-white block uppercase tracking-tight">{proj.subscriptionTitle || "Support Plan"}</span>
-                            </div>
-
-                            <div>
-                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Price & Cycle</span>
-                              <div className="flex items-baseline gap-1.5">
-                                <span className="text-xl font-black text-white">€{Number(proj.subscriptionPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                <span className="text-[9px] font-black text-zarco-cyan uppercase tracking-widest font-mono">/ {proj.subscriptionInterval || "monthly"}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* 3. Dates & Status */}
-                          <div className="lg:col-span-3 space-y-4">
-                            <div>
-                              <span className="text-[9px] font-black uppercase tracking-widest text-white/30 block mb-1">Status</span>
-                              <div>
-                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                  proj.subscriptionPaid 
-                                    ? "bg-green-500/10 border-green-500/20 text-green-400"
-                                    : "bg-amber-500/10 border-amber-500/20 text-amber-500"
-                                }`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${proj.subscriptionPaid ? "bg-green-400 animate-pulse" : "bg-amber-500"}`} />
-                                  {proj.subscriptionPaid ? "Active & Paid" : "Unpaid / Pending"}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2 text-left">
-                              <div>
-                                <span className="text-[8px] font-black uppercase tracking-widest text-white/30 block">Last Payment</span>
-                                <span className="text-[10px] font-bold text-white/80 font-mono block">
-                                  {proj.subscriptionPaidAt ? new Date(proj.subscriptionPaidAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : "Never"}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-[8px] font-black uppercase tracking-widest text-white/30 block">Next Payment</span>
-                                <span className="text-[10px] font-bold text-zarco-cyan font-mono block">
-                                  {nextRenewal()}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* 4. Controls */}
-                          <div className="lg:col-span-2 flex flex-col gap-2 pt-4 lg:pt-0 border-t lg:border-t-0 border-white/5">
-                            <Button
-                              onClick={async () => {
-                                try {
-                                  const projectRef = doc(db, "clientProjects", proj.id);
-                                  const newPaidStatus = !proj.subscriptionPaid;
-                                  const newPaidAt = newPaidStatus ? new Date().toISOString() : null;
-                                  
-                                  await updateDoc(projectRef, {
-                                    subscriptionPaid: newPaidStatus,
-                                    subscriptionPaidAt: newPaidAt,
-                                    updatedAt: new Date()
-                                  });
-
-                                  // Update State
-                                  setClientProjects(prev => prev.map(p => {
-                                    if (p.id === proj.id) {
-                                      return {
-                                        ...p,
-                                        subscriptionPaid: newPaidStatus,
-                                        subscriptionPaidAt: newPaidStatus ? newPaidAt || undefined : undefined
-                                      };
-                                    }
-                                    return p;
-                                  }));
-
-                                  showAdminToast(
-                                    newPaidStatus ? "Subscription marked as Active & Paid!" : "Subscription marked as Unpaid.",
-                                    newPaidStatus ? "success" : "warning"
-                                  );
-                                } catch (err: any) {
-                                  console.error("Error toggling subscription paid status:", err);
-                                  showAdminToast("Failed to update subscription status.", "error");
-                                }
-                              }}
-                              className={`w-full py-2.5 h-10 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${
-                                proj.subscriptionPaid 
-                                  ? "bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500 hover:text-black hover:border-transparent" 
-                                  : "bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black hover:border-transparent"
-                              }`}
-                            >
-                              {proj.subscriptionPaid ? "Mark Unpaid" : "Mark Paid"}
-                            </Button>
-
-                            <Button
-                              onClick={() => {
-                                setEditingClientProject(proj);
-                                setView("client-project-form");
-                              }}
-                              className="w-full py-2.5 h-10 bg-white/5 hover:bg-white/10 text-white/80 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/5"
-                            >
-                              Edit Settings
-                            </Button>
-
-                            <Button
-                              onClick={() => handleGenerateInvoiceFromSubscription(proj)}
-                              className="w-full py-2.5 h-10 bg-zarco-cyan/10 hover:bg-zarco-cyan/20 text-zarco-cyan rounded-xl text-[9px] font-black uppercase tracking-widest border border-zarco-cyan/20 flex items-center justify-center gap-1.5 transition-all"
-                            >
-                              <CreditCard className="w-4 h-4" />
-                              Create Bill
-                            </Button>
-
-                            <Button
-                              onClick={async () => {
-                                if (!window.confirm(`Are you sure you want to deactivate the subscription for "${proj.projectName}"?`)) {
-                                  return;
-                                }
-                                try {
-                                  const projectRef = doc(db, "clientProjects", proj.id);
-                                  await updateDoc(projectRef, {
-                                    hasSubscription: false,
-                                    subscriptionPaid: false,
-                                    subscriptionPaidAt: null,
-                                    updatedAt: new Date()
-                                  });
-
-                                  // Update State
-                                  setClientProjects(prev => prev.map(p => {
-                                    if (p.id === proj.id) {
-                                      return {
-                                        ...p,
-                                        hasSubscription: false,
-                                        subscriptionPaid: false,
-                                        subscriptionPaidAt: undefined
-                                      };
-                                    }
-                                    return p;
-                                  }));
-
-                                  showAdminToast("Subscription deactivated successfully.", "success");
-                                } catch (err: any) {
-                                  console.error("Error deactivating subscription:", err);
-                                  showAdminToast("Failed to deactivate subscription.", "error");
-                                }
-                              }}
-                              className="w-full py-1.5 h-8 bg-transparent text-red-500/50 hover:text-red-500 hover:bg-red-500/5 rounded-xl text-[8px] font-bold uppercase tracking-wider border border-transparent hover:border-red-500/20 mt-1"
-                            >
-                              Deactivate
-                            </Button>
-                          </div>
-
-                        </div>
-                      </Card>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
+          <AdminSubscriptions
+            clientProjects={clientProjects}
+            setClientProjects={setClientProjects}
+            clients={clients}
+            subSearchQuery={subSearchQuery}
+            setSubSearchQuery={setSubSearchQuery}
+            subFilterStatus={subFilterStatus}
+            setSubFilterStatus={setSubFilterStatus}
+            setEditingClientProject={setEditingClientProject}
+            setView={setView}
+            handleGenerateInvoiceFromSubscription={handleGenerateInvoiceFromSubscription}
+            handleDeleteClientProject={handleDeleteClientProject}
+            showAdminToast={showAdminToast}
+            db={db}
+            updateDoc={updateDoc}
+            doc={doc}
+          />
         ) : view === "subscribers" ? (
-          <div className="max-w-6xl mx-auto space-y-8">
-            <div className="flex justify-between items-end mb-4">
-              <div className="space-y-4">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zarco-cyan/10 border border-zarco-cyan/20">
-                  <Mail className="w-3 h-3 text-zarco-cyan" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-zarco-cyan">Newsletter Center</span>
-                </div>
-                <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-                  Newsletter <span className="text-zarco-cyan">Audience</span>
-                </h1>
-                <p className="text-white/40 font-medium max-w-md">
-                  Manage your subscribers and broadcast newsletters to your community.
-                </p>
-                
-                <div className="flex flex-wrap items-center gap-6 mt-6">
-                  <div className="flex items-center gap-4 p-4 bg-[#0a1114] border border-white/5 rounded-2xl w-fit">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${newsletterSettings.showSection ? "bg-green-500/10" : "bg-red-500/10"}`}>
-                        {newsletterSettings.showSection ? <Eye className="w-5 h-5 text-green-500" /> : <EyeOff className="w-5 h-5 text-red-500" />}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest leading-none mb-1">Homepage Visibility</p>
-                        <p className={`text-xs font-black uppercase tracking-widest ${newsletterSettings.showSection ? "text-green-500" : "text-red-500"}`}>
-                          Section is {newsletterSettings.showSection ? "Currently Live" : "Now Hidden"}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => toggleNewsletterSection(newsletterSettings.showSection)}
-                      className={`ml-4 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                        newsletterSettings.showSection 
-                          ? "bg-red-500/10 border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white" 
-                          : "bg-green-500/10 border-green-500/20 text-green-500 hover:bg-green-500 hover:text-white"
-                      }`}
-                    >
-                      {newsletterSettings.showSection ? "Hide from Home" : "Show on Home"}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 p-1 bg-white/5 rounded-xl w-fit mt-4">
-                  <button
-                    onClick={() => setNewsletterTab("audience")}
-                    className={`px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${newsletterTab === "audience" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-                  >
-                    Subscribers ({subscribers.length})
-                  </button>
-                  <button
-                    onClick={() => { setNewsletterTab("archives"); fetchArchives(); }}
-                    className={`px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${newsletterTab === "archives" ? "bg-white/10 text-white shadow-xl" : "text-white/40 hover:text-white"}`}
-                  >
-                    Archives ({archivedNewsletters.length})
-                  </button>
-                </div>
-              </div>
-              <div className="flex gap-4">
-                <Button
-                  onClick={() => {
-                    setNewsletterForm({ subject: "", content: "", lang: "en" });
-                    setEditingNewsletterId(null);
-                    setIsComposing(true);
-                  }}
-                  className="bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] px-8 py-6 rounded-xl hover:scale-105 active:scale-95 transition-all border-none flex items-center gap-2 shadow-[0_10px_30px_rgba(0,183,255,0.2)]"
-                >
-                  <Send className="w-4 h-4" />
-                  Compose Broadcast
-                </Button>
-                <Button
-                  onClick={fetchSubscribers}
-                  disabled={loadingSubscribers}
-                  variant="outline"
-                  className="bg-white/5 border-white/10 text-white/60 font-bold uppercase tracking-widest text-[10px] rounded-xl px-8 h-12 hover:bg-white/10"
-                >
-                  {loadingSubscribers ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  Refresh List
-                </Button>
-                <Button
-                  onClick={() => {
-                    const csvContent = "data:text/csv;charset=utf-8," 
-                      + "Email,Language,Subscribed At\n"
-                      + subscribers.map(s => `${s.email},${s.lang},${s.subscribedAt?.toDate?.() || new Date(s.subscribedAt)}`).join("\n");
-                    const encodedUri = encodeURI(csvContent);
-                    const link = document.createElement("a");
-                    link.setAttribute("href", encodedUri);
-                    link.setAttribute("download", "subscribers.csv");
-                    document.body.appendChild(link);
-                    link.click();
-                  }}
-                  className="bg-zarco-cyan/10 text-zarco-cyan font-black uppercase tracking-widest text-[11px] px-8 py-6 rounded-xl hover:bg-zarco-cyan/20 transition-all border border-zarco-cyan/20"
-                >
-                  Export CSV
-                </Button>
-              </div>
-            </div>
-
-            {newsletterTab === "audience" ? (
-              <Card className="bg-[#080d0f] border-white/5 rounded-[2.5rem] overflow-hidden">
-              <div className="p-0">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/5 bg-white/[0.02]">
-                      <th className="px-4 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em] w-12">
-                        <input 
-                          type="checkbox" 
-                          className="w-4 h-4 rounded border-white/10 bg-white/5"
-                          checked={subscribers.length > 0 && selectedEmails.length === subscribers.length}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedEmails(subscribers.map(s => s.email));
-                            } else {
-                              setSelectedEmails([]);
-                            }
-                          }}
-                        />
-                      </th>
-                      <th className="px-8 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">Email Address</th>
-                      <th className="px-8 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">Language</th>
-                      <th className="px-8 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">Subscription Date</th>
-                      <th className="px-8 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em] w-32">Status</th>
-                      <th className="px-8 py-6 text-[10px] font-black text-white/30 uppercase tracking-[0.2em] text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {subscribers.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-8 py-20 text-center text-white/20 uppercase text-xs font-bold tracking-widest">
-                          No subscribers found yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      subscribers.map((s) => (
-                        <tr 
-                          key={`${s.lang}-${s.id}`} 
-                          className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors group ${selectedEmails.includes(s.email) ? 'bg-zarco-cyan/5' : ''}`}
-                        >
-                          <td className="px-4 py-6">
-                            <input 
-                              type="checkbox" 
-                              className="w-4 h-4 rounded border-white/10 bg-white/5 accent-zarco-cyan"
-                              checked={selectedEmails.includes(s.email)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedEmails(prev => [...prev, s.email]);
-                                } else {
-                                  setSelectedEmails(prev => prev.filter(email => email !== s.email));
-                                }
-                              }}
-                            />
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
-                                <Mail className="w-3.5 h-3.5 text-white/40 group-hover:text-zarco-cyan transition-colors" />
-                              </div>
-                              <span className="text-sm font-bold text-white/80">{s.email}</span>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <span className={`text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest ${
-                              s.lang === 'pt' ? 'bg-green-500/10 text-green-500' : 'bg-blue-500/10 text-blue-500'
-                            }`}>
-                              {s.lang === 'pt' ? 'Portuguese' : 'English'}
-                            </span>
-                          </td>
-                          <td className="px-8 py-6 text-xs text-white/40 font-medium">
-                            {s.subscribedAt?.toDate?.().toLocaleDateString() || new Date(s.subscribedAt).toLocaleDateString()}
-                          </td>
-                          <td className="px-8 py-6">
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${s.active !== false ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}>
-                              {s.active !== false ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td className="px-8 py-6 text-right space-x-2">
-                             <button
-                              onClick={() => toggleSubscriberStatus(s.email, s.lang, s.active !== false)}
-                              title={s.active !== false ? "Deactivate" : "Activate"}
-                              className={`p-2 rounded-lg transition-colors ${s.active !== false ? 'text-white/40 hover:text-red-500 hover:bg-red-500/10' : 'text-white/40 hover:text-green-500 hover:bg-green-500/10'}`}
-                            >
-                              {s.active !== false ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </button>
-                            <button 
-                              onClick={() => setDeleteConfirm({ id: s.id, type: 'subscriber', email: s.email, lang: s.lang })}
-                              disabled={isDeletingSubscriber === s.id}
-                              className="p-3 text-white/20 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all disabled:opacity-50"
-                              title="Delete Subscriber"
-                            >
-                              {isDeletingSubscriber === s.id ? (
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-5 h-5" />
-                              )}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-            ) : (
-              <Card className="bg-white/[0.03] border-white/5 rounded-[2.5rem] overflow-hidden backdrop-blur-xl p-10">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {loadingArchives ? (
-                    Array(3).fill(0).map((_, i) => (
-                      <div key={i} className="h-48 rounded-3xl bg-white/5 animate-pulse" />
-                    ))
-                  ) : archivedNewsletters.length === 0 ? (
-                    <div className="col-span-full py-20 text-center space-y-4">
-                      <Mail className="w-12 h-12 text-white/5 mx-auto" />
-                      <p className="text-white/20 font-black uppercase tracking-widest text-sm">No archives found</p>
-                    </div>
-                  ) : (
-                    archivedNewsletters.map((newsletter) => (
-                      <div 
-                        key={newsletter.id} 
-                        onClick={() => loadDraft(newsletter)}
-                        className="bg-white/5 rounded-3xl p-6 border border-white/5 hover:border-zarco-cyan/30 transition-all group cursor-pointer hover:bg-white/[0.08]"
-                      >
-                        <div className="flex justify-between items-start mb-4">
-                          <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${newsletter.status === 'sent' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
-                            {newsletter.status}
-                          </div>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirm({ id: newsletter.id, type: 'newsletter', email: newsletter.subject });
-                            }} 
-                            className="p-2 text-white/20 hover:text-red-400 transition-all hover:bg-red-500/10 rounded-lg"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                        <h4 className="text-lg font-bold text-white mb-2 line-clamp-1">{newsletter.subject}</h4>
-                        <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-white/30">
-                          <span className="flex items-center gap-1"><LangIcon className="w-3 h-3" /> {newsletter.lang}</span>
-                          {newsletter.createdAt && <span>{newsletter.createdAt.toDate?.().toLocaleDateString() || new Date(newsletter.createdAt).toLocaleDateString()}</span>}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </Card>
-            )}
-
-            {deleteConfirm && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-                <Card className="bg-[#0a1114] border-white/10 w-full max-w-md rounded-[2rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-                  <div className="flex flex-col items-center text-center space-y-6">
-                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
-                      <Trash2 className="w-8 h-8 text-red-500" />
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="text-xl font-bold text-white uppercase tracking-tight">Confirm Deletion</h3>
-                      <p className="text-white/40 text-sm">
-                        Are you sure you want to delete <span className="text-white font-bold">{deleteConfirm.email}</span>?
-                        This action cannot be undone.
-                      </p>
-                    </div>
-                    <div className="flex gap-3 w-full pt-4">
-                      <Button
-                        variant="outline"
-                        onClick={() => setDeleteConfirm(null)}
-                        className="flex-1 bg-white/5 border-white/5 hover:bg-white/10 text-white font-bold h-12 rounded-xl"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          if (deleteConfirm.type === 'subscriber') {
-                            deleteSubscriber(deleteConfirm.id, deleteConfirm.email!, deleteConfirm.lang!);
-                          } else {
-                            deleteNewsletter(deleteConfirm.id);
-                          }
-                        }}
-                        className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold h-12 rounded-xl border-none"
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            )}
-
-            {isComposing && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-                <Card className="bg-[#0a1114] border-white/5 w-full max-w-2xl rounded-[2.5rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300">
-                  <div className="flex justify-between items-center mb-8 border-b border-white/5 pb-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                        <Send className="w-5 h-5 text-blue-500" />
-                      </div>
-                      <h3 className="text-xl font-bold uppercase tracking-tight text-white">
-                        Compose Newsletter
-                      </h3>
-                    </div>
-                    <button 
-                      onClick={() => {
-                        setIsComposing(false);
-                        setEditingNewsletterId(null);
-                      }}
-                      className="text-white/20 hover:text-white transition-colors"
-                    >
-                      <X className="w-6 h-6" />
-                    </button>
-                  </div>
-
-                  <form onSubmit={(e) => { e.preventDefault(); sendNewsletter(); }} className="space-y-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
-                        Target Recipients
-                      </label>
-                      <div className="grid grid-cols-2 gap-4">
-                        <button
-                          type="button"
-                          onClick={() => setNewsletterForm({ ...newsletterForm, lang: 'all' })}
-                          className={`py-4 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                            newsletterForm.lang === 'all' 
-                              ? 'bg-zarco-cyan/20 border-zarco-cyan/50 text-zarco-cyan shadow-[0_0_20px_rgba(0,183,255,0.1)]' 
-                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'
-                          }`}
-                        >
-                          All Subscribers
-                        </button>
-                        <button
-                          type="button"
-                          disabled={selectedEmails.length === 0}
-                          onClick={() => setNewsletterForm({ ...newsletterForm, lang: 'selected' })}
-                          className={`py-4 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all relative ${
-                            newsletterForm.lang === 'selected' 
-                              ? 'bg-purple-500/20 border-purple-500/50 text-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.1)]' 
-                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed'
-                          }`}
-                        >
-                          Selected ({selectedEmails.length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNewsletterForm({ ...newsletterForm, lang: 'en' })}
-                          className={`py-4 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                            newsletterForm.lang === 'en' 
-                              ? 'bg-blue-500/20 border-blue-500/50 text-blue-500' 
-                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'
-                          }`}
-                        >
-                          English Only
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNewsletterForm({ ...newsletterForm, lang: 'pt' })}
-                          className={`py-4 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                            newsletterForm.lang === 'pt' 
-                              ? 'bg-orange-500/20 border-orange-500/50 text-orange-500' 
-                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'
-                          }`}
-                        >
-                          Portuguese Only
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
-                        Subject Line
-                      </label>
-                      <Input
-                        required
-                        value={newsletterForm.subject}
-                        onChange={(e) => setNewsletterForm({ ...newsletterForm, subject: e.target.value })}
-                        placeholder="e.g. Exciting New Updates from Zarco Studios!"
-                        className="bg-[#0c1417] border-white/10 rounded-xl h-14"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
-                          Newsletter Content (HTML Supported)
-                        </label>
-                        <span className="text-[8px] font-black uppercase text-zarco-cyan bg-zarco-cyan/10 px-2 py-0.5 rounded">HTML Mode</span>
-                      </div>
-                      <textarea
-                        required
-                        value={newsletterForm.content}
-                        onChange={(e) => setNewsletterForm({ ...newsletterForm, content: e.target.value })}
-                        placeholder="<h1>Welcome</h1><p>Check out our latest projects...</p>"
-                        className="w-full bg-[#0c1417] border border-white/10 rounded-xl p-6 h-64 focus:outline-none focus:border-zarco-cyan transition-colors text-sm text-white/70 font-mono"
-                      />
-                    </div>
-
-                    <div className="flex gap-4 pt-4">
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          setIsComposing(false);
-                          setEditingNewsletterId(null);
-                        }}
-                        variant="outline"
-                        className="flex-1 bg-transparent border-white/10 text-white/60 font-bold uppercase tracking-widest text-[11px] rounded-xl h-14 hover:bg-white/5"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => setIsPreviewing(true)}
-                        className="px-6 bg-white/10 text-white font-black uppercase tracking-widest text-[11px] rounded-xl h-14 hover:bg-white/20 border-none"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => saveNewsletter(false)}
-                        disabled={savingNewsletter}
-                        className="flex-1 bg-white/5 text-white/60 font-black uppercase tracking-widest text-[11px] rounded-xl h-14 hover:bg-white/10 border border-white/10"
-                      >
-                        {savingNewsletter ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                        Save Draft
-                      </Button>
-                      <Button
-                        type="submit"
-                        disabled={sendingNewsletter}
-                        className="flex-[2] bg-zarco-cyan text-black font-black uppercase tracking-widest text-[11px] rounded-xl h-14 hover:scale-105 transition-all border-none shadow-[0_10px_30px_rgba(0,183,255,0.2)]"
-                      >
-                        {sendingNewsletter ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-                        Broadcast
-                      </Button>
-                    </div>
-                  </form>
-                </Card>
-              </div>
-            )}
-
-            {isPreviewing && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-in fade-in duration-300">
-                <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white rounded-3xl relative p-8 md:p-12">
-                  <button 
-                    onClick={() => setIsPreviewing(false)}
-                    className="absolute top-6 right-6 p-3 rounded-full bg-black/5 hover:bg-black/10 transition-colors text-black"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                  
-                  <div className="max-w-[600px] mx-auto text-black">
-                    {companySettings?.logoUrl ? (
-                      <div className="text-center mb-10">
-                        <img src={companySettings.logoUrl} alt="Logo" className="max-h-[60px] mx-auto" />
-                      </div>
-                    ) : (
-                      <div className="text-center mb-10 text-2xl font-black uppercase tracking-tighter">ZARCO STUDIOS</div>
-                    )}
-                    
-                    <div className="bg-[#f9f9f9] p-10 rounded-3xl border border-gray-100 shadow-sm">
-                      <h1 className="text-3xl font-black uppercase tracking-tight mb-6">{newsletterForm.subject || "Subject Placeholder"}</h1>
-                      <div 
-                        className="prose prose-sm max-w-none text-gray-600"
-                        dangerouslySetInnerHTML={{ __html: newsletterForm.content || "<p>Compose your content to see it here...</p>" }}
-                      />
-                    </div>
-                    
-                    <div className="mt-12 text-center text-[#999] text-[10px] font-medium uppercase tracking-widest space-y-2">
-                      <p>{newsletterForm.lang === 'pt' ? 'Recebeu este e-mail porque se inscreveu nas atualizações do Zarco Studios.' : 'You are receiving this because you subscribed to Zarco Studios updates.'}</p>
-                      <p>{newsletterForm.lang === 'pt' ? '© 2026 Zarco Studios. Todos os direitos reservados.' : '© 2026 Zarco Studios. All rights reserved.'}</p>
-                      <p className="pt-4 underline cursor-pointer">{newsletterForm.lang === 'pt' ? 'Remover subscrição' : 'Unsubscribe'}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <AdminSubscribers
+            newsletterSettings={newsletterSettings}
+            toggleNewsletterSection={toggleNewsletterSection}
+            newsletterTab={newsletterTab}
+            setNewsletterTab={setNewsletterTab}
+            subscribers={subscribers}
+            archivedNewsletters={archivedNewsletters}
+            fetchArchives={fetchArchives}
+            setNewsletterForm={setNewsletterForm}
+            setEditingNewsletterId={setEditingNewsletterId}
+            setIsComposing={setIsComposing}
+            fetchSubscribers={fetchSubscribers}
+            loadingSubscribers={loadingSubscribers}
+            selectedEmails={selectedEmails}
+            setSelectedEmails={setSelectedEmails}
+            toggleSubscriberStatus={toggleSubscriberStatus}
+            deleteConfirm={deleteConfirm}
+            setDeleteConfirm={setDeleteConfirm}
+            isDeletingSubscriber={isDeletingSubscriber}
+            deleteSubscriber={deleteSubscriber}
+            deleteNewsletter={deleteNewsletter}
+            isComposing={isComposing}
+            newsletterForm={newsletterForm}
+            sendNewsletter={sendNewsletter}
+            saveNewsletter={saveNewsletter}
+            savingNewsletter={savingNewsletter}
+            sendingNewsletter={sendingNewsletter}
+            isPreviewing={isPreviewing}
+            setIsPreviewing={setIsPreviewing}
+            companySettings={companySettings}
+            loadDraft={loadDraft}
+            loadingArchives={loadingArchives}
+          />
         ) : view === "reviews-list" || view === "reviews-form" ? (
           <AdminReviews
             view={view}
@@ -7796,7 +6812,7 @@ SWIFT: ABCDEFGH"
                           Budget Allocation
                         </span>
                         <span className="text-2xl font-black text-zarco-cyan">
-                          ${Number(editingClientProject.price).toLocaleString()}
+                          €{Number(editingClientProject.price).toLocaleString()}
                         </span>
                       </div>
                       <div>
@@ -8996,6 +8012,28 @@ SWIFT: ABCDEFGH"
                                 </select>
                               </div>
                             </div>
+                          </div>
+
+                          <div className="space-y-2 max-w-sm">
+                            <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest block">
+                              Times Paid (Before Cancellation / Active)
+                            </label>
+                            <Input
+                              type="number"
+                              min="0"
+                              value={editingClientProject.subscriptionPaidCountPriorCancellation ?? ""}
+                              onChange={(e) =>
+                                setEditingClientProject({
+                                  ...editingClientProject,
+                                  subscriptionPaidCountPriorCancellation: e.target.value === "" ? "" : Number(e.target.value),
+                                })
+                              }
+                              placeholder="E.g. 5"
+                              className="bg-[#0c1417] border-white/10 rounded-xl h-12 w-full"
+                            />
+                            <p className="text-[9px] text-white/30 lowercase tracking-normal font-semibold">
+                              Used to calculate money charged so far for active & cancelled subscriptions.
+                            </p>
                           </div>
 
                           <div className="space-y-2">
@@ -11586,6 +10624,18 @@ SWIFT: ABCDEFGH"
                     ))}
                   </select>
                 </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-[8px] font-bold text-white/20 uppercase tracking-widest ml-1">Type</label>
+                  <select 
+                    value={billingTypeFilter}
+                    onChange={(e) => setBillingTypeFilter(e.target.value as any)}
+                    className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-bold text-zarco-cyan focus:outline-none focus:border-zarco-cyan h-12"
+                  >
+                    <option value="all">ALL PAYMENTS</option>
+                    <option value="project">PROJECT PAYMENTS</option>
+                    <option value="subscription">SUBSCRIPTIONS</option>
+                  </select>
+                </div>
                 <Button
                   onClick={() => setView("billing-list")}
                   variant="outline"
@@ -11602,10 +10652,7 @@ SWIFT: ABCDEFGH"
                   Gross Revenue
                 </p>
                 <h3 className="text-2xl font-black text-zarco-cyan uppercase">
-                  € {invoices.filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? inv.amount : 0), 0).toLocaleString()}
+                  € {filteredAnalyticsInvoices.reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? inv.amount : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Total Paid
@@ -11616,10 +10663,7 @@ SWIFT: ABCDEFGH"
                   Net Revenue (Tax Off)
                 </p>
                 <h3 className="text-2xl font-black text-white uppercase">
-                  € {invoices.filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.amount - (inv.vatAmount || 0)) : 0), 0).toLocaleString()}
+                  € {filteredAnalyticsInvoices.reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.amount - (inv.vatAmount || 0)) : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Earnings after tax
@@ -11630,10 +10674,7 @@ SWIFT: ABCDEFGH"
                   Tax Collected
                 </p>
                 <h3 className="text-2xl font-black text-white uppercase">
-                  € {invoices.filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.vatAmount || 0) : 0), 0).toLocaleString()}
+                  € {filteredAnalyticsInvoices.reduce((sum, inv) => sum + (normalizeStatus(inv.status) === 'PAID' ? (inv.vatAmount || 0) : 0), 0).toLocaleString()}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                    Total VAT share
@@ -11644,10 +10685,7 @@ SWIFT: ABCDEFGH"
                   Pending Assets
                 </p>
                 <h3 className="text-3xl font-black text-white uppercase">
-                  € {invoices.filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).reduce((sum, inv) => {
+                  € {filteredAnalyticsInvoices.reduce((sum, inv) => {
                     const s = normalizeStatus(inv.status);
                     return sum + (s !== 'PAID' && s !== 'VOID' ? inv.amount : 0);
                   }, 0).toLocaleString()}
@@ -11661,10 +10699,7 @@ SWIFT: ABCDEFGH"
                   Invoiced Count
                 </p>
                 <h3 className="text-3xl font-black text-white uppercase">
-                  {invoices.filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  }).length}
+                  {filteredAnalyticsInvoices.length}
                 </h3>
                 <p className="text-[10px] text-white/40 mt-2 uppercase tracking-tight italic">
                   Total documents
@@ -11674,11 +10709,7 @@ SWIFT: ABCDEFGH"
 
             <div className="space-y-12">
               {Object.entries(
-                invoices
-                  .filter(inv => {
-                    const d = new Date(inv.issueDate);
-                    return d.getFullYear().toString() === analyticsYear && (analyticsMonth === "All" || d.toLocaleString('en-US', { month: 'long' }) === analyticsMonth);
-                  })
+                filteredAnalyticsInvoices
                   .reduce((acc, inv) => {
                     const date = new Date(inv.issueDate);
                     const month = date.toLocaleString('en-US', { month: 'long' });
@@ -11731,25 +10762,52 @@ SWIFT: ABCDEFGH"
                               </h4>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs font-bold text-white mb-0.5">
+                          <div className="text-right flex flex-col items-end gap-1.5">
+                            <p className="text-xs font-bold text-white mb-0 text-right">
                               {invoice.currency} {invoice.amount.toLocaleString()}
                             </p>
                             {invoice.vatAmount > 0 && (
-                              <p className="text-[9px] font-bold text-purple-400/60 uppercase tracking-widest mb-1">
+                              <p className="text-[9px] font-bold text-purple-400/60 uppercase tracking-widest mb-0 text-right">
                                 Tax: {invoice.currency} {invoice.vatAmount.toLocaleString()}
                               </p>
                             )}
-                            <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded ${
-                              normalizeStatus(invoice.status) === 'PAID' ? 'bg-green-500/20 text-green-400' : 
-                              normalizeStatus(invoice.status) === 'UNPAID' ? 'bg-orange-500/20 text-orange-400' :
-                              normalizeStatus(invoice.status) === 'VOID' ? 'bg-red-500/20 text-red-400' :
-                              normalizeStatus(invoice.status) === 'PENDING' ? 'bg-cyan-500/20 text-cyan-400' :
-                              normalizeStatus(invoice.status) === 'DUPLICATE' ? 'bg-purple-500/20 text-purple-400' :
-                              'bg-white/10 text-white/40'
-                            }`}>
-                              {normalizeStatus(invoice.status)}
-                            </span>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {invoice.isSubscription && (() => {
+                                const ptMonthMap: Record<string, string> = {
+                                  "January": "Janeiro",
+                                  "February": "Fevereiro",
+                                  "March": "Março",
+                                  "April": "Abril",
+                                  "May": "Maio",
+                                  "June": "Junho",
+                                  "July": "Julho",
+                                  "August": "Agosto",
+                                  "September": "Setembro",
+                                  "October": "Outubro",
+                                  "November": "Novembro",
+                                  "December": "Dezembro"
+                                };
+                                const rawMonth = invoice.subscriptionMonth || (invoice.issueDate ? new Date(invoice.issueDate + 'T12:00:00').toLocaleString('en-US', { month: 'long' }) : new Date().toLocaleString('en-US', { month: 'long' }));
+                                const ptMonthName = ptMonthMap[rawMonth] || rawMonth;
+                                const displayMonth = rawMonth === ptMonthName ? rawMonth : `${rawMonth} / ${ptMonthName}`;
+                                return (
+                                  <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-zarco-cyan/15 text-zarco-cyan border border-zarco-cyan/25 flex items-center gap-1 animate-fade-in">
+                                    <span>💳</span>
+                                    Subscription • {displayMonth}
+                                  </span>
+                                );
+                              })()}
+                              <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                                normalizeStatus(invoice.status) === 'PAID' ? 'bg-green-500/20 text-green-400' : 
+                                normalizeStatus(invoice.status) === 'UNPAID' ? 'bg-orange-500/20 text-orange-400' :
+                                normalizeStatus(invoice.status) === 'VOID' ? 'bg-red-500/20 text-red-400' :
+                                normalizeStatus(invoice.status) === 'PENDING' ? 'bg-cyan-500/20 text-cyan-400' :
+                                normalizeStatus(invoice.status) === 'DUPLICATE' ? 'bg-purple-500/20 text-purple-400' :
+                                'bg-white/10 text-white/40'
+                              }`}>
+                                {normalizeStatus(invoice.status)}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );
@@ -11778,27 +10836,62 @@ SWIFT: ABCDEFGH"
               </Button>
             </div>
 
-            {/* Admin Billing Search Bar */}
+            {/* Admin Billing Search Bar & Filter Buttons */}
             {invoices.length > 0 && (
-              <div className="relative mb-8 max-w-md animate-fade-in">
-                <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
-                  <Search className="w-4 h-4" />
-                </span>
-                <input
-                  type="text"
-                  value={adminBillingSearch}
-                  onChange={(e) => setAdminBillingSearch(e.target.value)}
-                  placeholder="Search bills by year, company title..."
-                  className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
-                />
-                {adminBillingSearch && (
+              <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between mb-8 animate-fade-in">
+                <div className="relative max-w-md w-full">
+                  <span className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-white/30">
+                    <Search className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    value={adminBillingSearch}
+                    onChange={(e) => setAdminBillingSearch(e.target.value)}
+                    placeholder="Search bills by year, company title..."
+                    className="w-full h-11 pl-12 pr-10 bg-white/[0.02] border border-white/5 hover:border-white/10 focus:border-zarco-cyan/50 focus:bg-white/[0.04] transition-all rounded-2xl text-[11px] font-bold uppercase tracking-wider text-white placeholder-white/20 outline-none"
+                  />
+                  {adminBillingSearch && (
+                    <button
+                      onClick={() => setAdminBillingSearch('')}
+                      className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center bg-[#080d0f] border border-white/5 p-1 rounded-xl self-start md:self-auto shrink-0">
                   <button
-                    onClick={() => setAdminBillingSearch('')}
-                    className="absolute inset-y-0 right-4 flex items-center text-white/30 hover:text-white"
+                    onClick={() => setBillingTypeFilter("all")}
+                    className={`px-4 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                      billingTypeFilter === "all"
+                        ? "bg-zarco-cyan text-black"
+                        : "text-white/60 hover:text-white"
+                    }`}
                   >
-                    <X className="w-4 h-4" />
+                    All Payments
                   </button>
-                )}
+                  <button
+                    onClick={() => setBillingTypeFilter("project")}
+                    className={`px-4 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                      billingTypeFilter === "project"
+                        ? "bg-zarco-cyan text-black"
+                        : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    Projects
+                  </button>
+                  <button
+                    onClick={() => setBillingTypeFilter("subscription")}
+                    className={`px-4 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                      billingTypeFilter === "subscription"
+                        ? "bg-zarco-cyan text-black"
+                        : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    Subscriptions
+                  </button>
+                </div>
               </div>
             )}
 
@@ -11850,7 +10943,7 @@ SWIFT: ABCDEFGH"
                             <span className="text-[10px] font-black text-zarco-cyan uppercase tracking-widest mb-1">
                               {invoice.invoiceNumber}
                             </span>
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
                               <span
                                 className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
                                   normalizeStatus(invoice.status) === "PAID"
@@ -11868,6 +10961,31 @@ SWIFT: ABCDEFGH"
                               >
                                 {normalizeStatus(invoice.status)}
                               </span>
+                              {invoice.isSubscription && (() => {
+                                const ptMonthMap: Record<string, string> = {
+                                  "January": "Janeiro",
+                                  "February": "Fevereiro",
+                                  "March": "Março",
+                                  "April": "Abril",
+                                  "May": "Maio",
+                                  "June": "Junho",
+                                  "July": "Julho",
+                                  "August": "Agosto",
+                                  "September": "Setembro",
+                                  "October": "Outubro",
+                                  "November": "Novembro",
+                                  "December": "Dezembro"
+                                };
+                                const rawMonth = invoice.subscriptionMonth || (invoice.issueDate ? new Date(invoice.issueDate + 'T12:00:00').toLocaleString('en-US', { month: 'long' }) : new Date().toLocaleString('en-US', { month: 'long' }));
+                                const ptMonthName = ptMonthMap[rawMonth] || rawMonth;
+                                const displayMonth = rawMonth === ptMonthName ? rawMonth : `${rawMonth} / ${ptMonthName}`;
+                                return (
+                                  <span className="px-2.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-zarco-cyan/15 text-zarco-cyan border border-zarco-cyan/25 flex items-center gap-1 animate-fade-in">
+                                    <span>💳</span>
+                                    Subscription • {displayMonth}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <h3 className="text-xl font-black text-white/80">
                               {invoice.currency} {(invoice.amount || 0).toLocaleString()}
@@ -12298,6 +11416,51 @@ SWIFT: ABCDEFGH"
                         </div>
                       )}
                     </div>
+
+                    {/* Subscription Settings */}
+                    <div className="space-y-4 pt-4 border-t border-white/5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Is Subscription Bill</label>
+                        <input 
+                          type="checkbox"
+                          checked={editingInvoice.isSubscription || false}
+                          onChange={(e) => setEditingInvoice({...editingInvoice, isSubscription: e.target.checked})}
+                          className="w-4 h-4 rounded border-white/10 bg-black/20 accent-zarco-cyan"
+                        />
+                      </div>
+                      {editingInvoice.isSubscription && (
+                        <div className="space-y-2 animate-fade-in">
+                          <label className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Subscription Month</label>
+                          <select
+                            value={editingInvoice.subscriptionMonth || new Date().toLocaleString("en-US", { month: "long" })}
+                            onChange={(e) => setEditingInvoice({...editingInvoice, subscriptionMonth: e.target.value})}
+                            className="w-full rounded-xl border border-white/10 bg-[#080d0f] text-white h-10 px-3 text-xs focus:border-zarco-cyan focus:outline-none"
+                          >
+                            {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m) => {
+                              const ptMonthMapForOption: Record<string, string> = {
+                                "January": "Janeiro",
+                                "February": "Fevereiro",
+                                "March": "Março",
+                                "April": "Abril",
+                                "May": "Maio",
+                                "June": "Junho",
+                                "July": "Julho",
+                                "August": "Agosto",
+                                "September": "Setembro",
+                                "October": "Outubro",
+                                "November": "Novembro",
+                                "December": "Dezembro"
+                              };
+                              return (
+                                <option key={m} value={m}>
+                                  {m} / {ptMonthMapForOption[m]}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="pt-6 border-t border-zarco-cyan/10 space-y-3">
@@ -12725,7 +11888,7 @@ SWIFT: ABCDEFGH"
             <div className="flex border-b border-white/5 bg-[#0a1114] px-6 py-5 items-center justify-between sticky top-0 z-[140]">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-zarco-cyan/10 flex items-center justify-center border border-zarco-cyan/20">
-                  <DollarSign className="w-5 h-5 text-zarco-cyan" />
+                  <Euro className="w-5 h-5 text-zarco-cyan" />
                 </div>
                 <div className="text-left">
                   <h3 className="text-lg font-black uppercase tracking-tight text-white leading-tight">
@@ -13355,7 +12518,7 @@ SWIFT: ABCDEFGH"
                       // Auto-save existing project to Firestore immediately
                       if (editingClientProject.id && !editingClientProject.id.startsWith("client-proj-temp-")) {
                         try {
-                          const projectData = { ...updatedProj };
+                          const projectData = { ...updatedProj }; Object.keys(projectData).forEach(k => { if ((projectData as any)[k] === undefined) delete (projectData as any)[k]; });
                           const projectId = projectData.id;
                           delete (projectData as any).id;
                           
