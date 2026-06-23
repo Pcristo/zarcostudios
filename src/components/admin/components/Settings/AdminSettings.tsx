@@ -10,7 +10,7 @@ import {
   Trash2,
   Eye,
 } from "lucide-react";
-import { CompanySettings, PricingSettings, NewsletterSettings, TestimonialsSettings } from "../types";
+import { CompanySettings, PricingSettings, NewsletterSettings, TestimonialsSettings } from "../../types";
 
 interface AdminSettingsProps {
   companySettings: CompanySettings;

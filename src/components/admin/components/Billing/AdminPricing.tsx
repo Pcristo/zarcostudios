@@ -11,7 +11,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
-import { PricingPlan, PricingSettings, AdminView } from "../types";
+import { PricingPlan, PricingSettings, AdminView } from "../../types";
 
 interface AdminPricingProps {
   view: AdminView;

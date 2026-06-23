@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, CreditCard, Mail, Eye, EyeOff, Loader2, X, Trash2 } from "lucide-react";
-import { Client, ClientProject, AdminView } from "../types";
+import { Client, ClientProject, AdminView } from "../../types";
 import { setDoc } from "firebase/firestore";
 
 interface AdminSubscriptionsProps {

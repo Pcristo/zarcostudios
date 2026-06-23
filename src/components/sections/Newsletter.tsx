@@ -37,8 +37,18 @@ export function Newsletter() {
 
     setStatus('loading');
     
-    // Get recaptcha token - Disabled for now
+    // Get recaptcha token
+    const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
     let token: string | undefined = undefined;
+
+    if (siteKey && recaptchaRef.current) {
+      try {
+        token = await recaptchaRef.current.executeAsync() || undefined;
+        recaptchaRef.current.reset();
+      } catch (captchaErr) {
+        console.error("ReCAPTCHA execution error:", captchaErr);
+      }
+    }
 
     try {
       const response = await fetch('/api/subscribe', {
@@ -166,6 +176,13 @@ export function Newsletter() {
                   </span>
                 )}
               </Button>
+              {import.meta.env.VITE_RECAPTCHA_SITE_KEY && (
+                <ReCAPTCHA
+                  ref={recaptchaRef}
+                  size="invisible"
+                  sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
+                />
+              )}
             </form>
           </motion.div>
         </div>

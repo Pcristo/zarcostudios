@@ -13,7 +13,7 @@ import {
   Target as LangIcon,
   Save,
 } from "lucide-react";
-import { Subscriber, NewsletterSettings, CompanySettings } from "../types";
+import { Subscriber, NewsletterSettings, CompanySettings } from "../../types";
 
 interface AdminSubscribersProps {
   newsletterSettings: NewsletterSettings;

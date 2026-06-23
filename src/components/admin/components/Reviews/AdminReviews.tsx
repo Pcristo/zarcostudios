@@ -15,7 +15,7 @@ import {
   Linkedin,
   Upload,
 } from "lucide-react";
-import { Review, TestimonialsSettings, AdminView } from "../types";
+import { Review, TestimonialsSettings, AdminView } from "../../types";
 
 interface AdminReviewsProps {
   view: AdminView;

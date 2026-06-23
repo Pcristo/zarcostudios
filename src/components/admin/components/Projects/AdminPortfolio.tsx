@@ -21,7 +21,7 @@ import {
   Loader2,
   Image as ImageIcon,
 } from "lucide-react";
-import { Project, AdminView, TECHNICAL_STACK } from "../types";
+import { Project, AdminView, TECHNICAL_STACK } from "../../types";
 
 const categories = ["Portfolio", "College"];
 const institutions = ["Code Institute", "Harvard University", "none"];
