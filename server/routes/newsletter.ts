@@ -2,22 +2,15 @@ import { Router } from "express";
 import { doc, getDoc, getDocs, collection, setDoc, serverTimestamp } from "firebase/firestore";
 import { clientDb } from "../services/firebase";
 import { resend } from "../services/resend";
-import { verifyRecaptcha } from "../utils/recaptcha";
 
 const router = Router();
 
 // Newsletter Subscription Route
 router.post("/subscribe", async (req, res) => {
-  const { email, lang, captchaToken } = req.body;
+  const { email, lang } = req.body;
 
   if (!email || !email.includes("@")) {
     return res.status(400).json({ error: "Invalid email" });
-  }
-
-  // Verify reCAPTCHA token if configured
-  const isHuman = await verifyRecaptcha(captchaToken);
-  if (!isHuman) {
-    return res.status(403).json({ error: "reCAPTCHA verification failed. Please try again." });
   }
 
   const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";

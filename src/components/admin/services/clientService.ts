@@ -1,44 +1,78 @@
-import { db } from "@/lib/firebase";
-import { 
-  collection, 
-  getDocs, 
-  getDoc, 
-  setDoc, 
-  addDoc, 
-  doc, 
-  deleteDoc, 
-  updateDoc 
+import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  setDoc,
+  query,
+  orderBy,
+  serverTimestamp,
 } from "firebase/firestore";
-import { Client, Subscriber } from "../types/client";
+import { Client } from "../types/client";
 
-export async function fetchClients(): Promise<Client[]> {
-  const snapshot = await getDocs(collection(db, "clients"));
-  return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Client));
-}
-
-export async function saveClient(client: Partial<Client>): Promise<string> {
-  if (client.id) {
-    const ref = doc(db, "clients", client.id);
-    await setDoc(ref, { ...client, updatedAt: new Date() }, { merge: true });
-    return client.id;
-  } else {
-    // Add new client
-    const ref = await addDoc(collection(db, "clients"), { 
-      ...client, 
-      createdAt: new Date(), 
-      updatedAt: new Date() 
-    });
-    return ref.id;
+export const getClients = async (): Promise<Client[]> => {
+  try {
+    const q = query(collection(db, "clients"), orderBy("fullName", "asc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Client[];
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, "clients");
+    throw error;
   }
-}
+};
 
-export async function deleteClient(id: string): Promise<void> {
-  const ref = doc(db, "clients", id);
-  await deleteDoc(ref);
-}
+export const saveClient = async (client: Client): Promise<void> => {
+  const isNew = client.id.startsWith("client-temp-");
+  try {
+    const clientData = { ...client };
+    const clientId = clientData.id;
+    delete (clientData as any).id;
 
-export async function fetchActiveSubscribers(lang: "en" | "pt" = "en"): Promise<Subscriber[]> {
-  const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
-  const snapshot = await getDocs(collection(db, collectionName));
-  return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Subscriber));
-}
+    if (isNew) {
+      await addDoc(collection(db, "clients"), {
+        ...clientData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      if (clientData.createdAt) delete (clientData as any).createdAt;
+      await updateDoc(doc(db, "clients", clientId), {
+        ...clientData,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      isNew ? OperationType.CREATE : OperationType.UPDATE,
+      "clients"
+    );
+    throw error;
+  }
+};
+
+export const deleteClient = async (id: string, client: Client): Promise<void> => {
+  try {
+    // Move to Trash
+    await setDoc(doc(db, "trash", id), {
+      originalId: id,
+      type: "client",
+      name: client.fullName || client.companyName || "Unnamed Client",
+      details: client.email || client.companyName || "",
+      deletedAt: new Date().toISOString(),
+      originalCollection: "clients",
+      data: client,
+    });
+    // Delete from main collection
+    await deleteDoc(doc(db, "clients", id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `clients/${id}`);
+    throw error;
+  }
+};

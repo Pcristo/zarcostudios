@@ -1,7 +1,7 @@
 import React from "react";
 import { Card } from "@/components/ui/card";
 import { Star, MessageSquare, Globe, X } from "lucide-react";
-import { Review, FeedbackAlert, ExpiringAsset, ClientProject, AdminView } from "../types";
+import { Review, FeedbackAlert, ExpiringAsset, ClientProject, AdminView } from "../../types";
 
 // Note: To be secure and avoid any missing fields in types, we extend the prop declarations
 interface AdminAttentionRequiredProps {

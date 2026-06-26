@@ -1,21 +1,3 @@
-export interface Host {
-  domainName: string;
-  providerUrl: string;
-  domainProvider: string;
-  domainExpiration: string;
-  hostingType: "Frontend" | "Backend" | "Database" | "Fullstack" | "Other" | "";
-  isHostingFree: boolean;
-  isClientProvided?: boolean;
-  showDomainExpiration?: boolean;
-  isPaymentManagedByCustomer?: boolean;
-}
-
-export interface PrototypeEntry {
-  id: string;
-  title: string;
-  embedHtml: string;
-}
-
 export interface Project {
   id: string;
   title: string;
@@ -36,6 +18,26 @@ export interface Project {
   gallery?: string[];
   isFeatured?: boolean;
   isActive?: boolean;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface Host {
+  domainName: string;
+  providerUrl: string;
+  domainProvider: string;
+  domainExpiration: string;
+  hostingType: "Frontend" | "Backend" | "Database" | "Fullstack" | "Other" | "";
+  isHostingFree: boolean;
+  isClientProvided?: boolean;
+  showDomainExpiration?: boolean;
+  isPaymentManagedByCustomer?: boolean;
+}
+
+export interface PrototypeEntry {
+  id: string;
+  title: string;
+  embedHtml: string;
 }
 
 export interface ClientProject {
@@ -133,21 +135,82 @@ export interface ClientProject {
   termsDescription?: string;
   termsUrl?: string;
   showTermsButton?: boolean;
+  additionalPhases?: any[];
 }
 
-export interface FeedbackAlert {
-  id: string;
-  text: string;
-  createdAt: string;
-  project: ClientProject;
-}
+export const PROJECT_STATUSES = [
+  "Lead",
+  "Planning",
+  "Design",
+  "Development",
+  "Testing",
+  "Completed",
+  "Maintenance",
+];
 
-export interface ExpiringAsset {
-  projectId: string;
-  projectName: string;
-  assetName: string;
-  provider: string;
-  expirationDate: string;
-  isHost: boolean;
-  daysRemaining: number;
-}
+export const TECHNICAL_STACK = {
+  frontend: [
+    "HTML5",
+    "CSS3",
+    "JavaScript",
+    "TypeScript",
+    "React",
+    "Bootstrap",
+    "Tailwind CSS",
+    "Next.js"
+  ],
+  backend: [
+    "Django",
+    "Flask",
+    "NestJS",
+    "REST APIs",
+    "Express.js",
+    "FastAPI"
+  ],
+  programmingLanguages: [
+    "Python",
+    "JavaScript",
+    "TypeScript",
+    "PHP",
+    "SQL"
+  ],
+  databases: [
+    "MongoDB",
+    "Firebase",
+    "PostgreSQL",
+    "MySQL"
+  ],
+  hostingDeployment: [
+    "Render",
+    "Netlify",
+    "Cloudflare",
+    "Vercel",
+    "Docker"
+  ],
+  payments: [
+    "Stripe",
+    "PayPal",
+    "Lemon Squeezy"
+  ]
+};
+
+export const TECH_STACK_OPTIONS = Array.from(
+  new Set(Object.values(TECHNICAL_STACK).flat())
+);
+
+export const INFRASTRUCTURE_PROVIDERS = [
+  "Hostinger",
+  "GoDaddy",
+  "Namecheap",
+  "Amazon Web Services (AWS)",
+  "Cloudinary",
+  "Render",
+  "Heroku",
+  "Firebase",
+  "Vercel",
+  "Netlify",
+  "Cloudflare Pages",
+  "Other",
+];
+
+export const PAID_STATUSES = ["Paid", "Pending", "Deposit", "Proposal"];

@@ -1,15 +1,14 @@
-export async function uploadFile(file: File, folderName?: string): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (folderName) {
-    formData.append("folder", folderName);
-  } else {
-    formData.append("folder", "portfolio/general");
-  }
+export const uploadFileToCloudinary = async (
+  file: File,
+  folderName: string = "portfolio"
+): Promise<string> => {
+  const formDataUpload = new FormData();
+  formDataUpload.append("file", file);
+  formDataUpload.append("folder", folderName);
 
   const response = await fetch("/api/upload", {
     method: "POST",
-    body: formData,
+    body: formDataUpload,
   });
 
   if (!response.ok) {
@@ -17,6 +16,6 @@ export async function uploadFile(file: File, folderName?: string): Promise<strin
     throw new Error(errorData.error || "Upload failed");
   }
 
-  const data = await response.json();
-  return data.url;
-}
+  const { url } = await response.json();
+  return url;
+};

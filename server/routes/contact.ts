@@ -1,20 +1,13 @@
 import { Router } from "express";
 import { resend } from "../services/resend";
-import { verifyRecaptcha } from "../utils/recaptcha";
 
 const router = Router();
 
 router.post("/", async (req, res) => {
-  const { name, company, email, phone, details, isSharedPage, captchaToken } = req.body;
+  const { name, company, email, phone, details, isSharedPage } = req.body;
 
   if (!name || !email || !details) {
     return res.status(400).json({ error: "Missing required fields (name, email, details)" });
-  }
-
-  // Verify reCAPTCHA token if configured
-  const isHuman = await verifyRecaptcha(captchaToken);
-  if (!isHuman) {
-    return res.status(403).json({ error: "reCAPTCHA verification failed. Please try again." });
   }
 
   try {

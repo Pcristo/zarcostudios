@@ -1,50 +1,66 @@
 import { useState, useCallback } from "react";
 import { Client } from "../types/client";
-import { fetchClients, saveClient as apiSaveClient, deleteClient as apiDeleteClient } from "../services/clientService";
+import { getClients as getClientsService, saveClient as saveClientService, deleteClient as deleteClientService } from "../services/clientService";
 
-export function useClients() {
+export function useClients(showAdminToast: (msg: string, type?: "success" | "error" | "warning") => void) {
   const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [savingClient, setSavingClient] = useState(false);
 
-  const loadClients = useCallback(async () => {
-    setLoading(true);
+  const fetchClients = useCallback(async () => {
+    setLoadingClients(true);
     try {
-      const data = await fetchClients();
+      const data = await getClientsService();
       setClients(data);
-    } catch (e) {
-      console.error(e);
+    } catch (error: any) {
+      console.error("Fetch clients error:", error);
     } finally {
-      setLoading(false);
+      setLoadingClients(false);
     }
   }, []);
 
-  const saveClient = useCallback(async (client: Partial<Client>) => {
-    setLoading(true);
+  const saveClient = useCallback(async (client: Client) => {
+    setSavingClient(true);
     try {
-      const id = await apiSaveClient(client);
-      await loadClients();
-      return id;
+      await saveClientService(client);
+      const isNew = client.id.startsWith("client-temp-");
+      showAdminToast(
+        isNew ? "Client onboarded successfully!" : "Profile updated successfully!",
+        "success"
+      );
+      await fetchClients();
+      return true;
+    } catch (error: any) {
+      console.error("Save client error:", error);
+      showAdminToast(`Failed to save client: ${error.message || error}`, "error");
+      return false;
     } finally {
-      setLoading(false);
+      setSavingClient(false);
     }
-  }, [loadClients]);
+  }, [fetchClients, showAdminToast]);
 
-  const removeClient = useCallback(async (id: string) => {
-    setLoading(true);
+  const deleteClient = useCallback(async (id: string) => {
     try {
-      await apiDeleteClient(id);
-      await loadClients();
-    } finally {
-      setLoading(false);
+      const client = clients.find((c) => c.id === id);
+      if (!client) return false;
+      await deleteClientService(id, client);
+      setClients((prev) => prev.filter((c) => c.id !== id));
+      showAdminToast("Client moved to Trash Bin", "success");
+      return true;
+    } catch (error: any) {
+      console.error("Delete client error:", error);
+      showAdminToast(`Failed to delete client: ${error.message || error}`, "error");
+      return false;
     }
-  }, [loadClients]);
+  }, [clients, showAdminToast]);
 
   return {
     clients,
     setClients,
-    loading,
-    loadClients,
+    loadingClients,
+    savingClient,
+    fetchClients,
     saveClient,
-    removeClient
+    deleteClient,
   };
 }

@@ -47,12 +47,16 @@ export const parseFlexibleDate = (dateStr: string | undefined): Date | null => {
 };
 
 export const isAssetExpiringSoon = (
-  expirationDate: string | undefined, 
-  _isFree?: boolean | string | undefined, 
-  _showExp?: boolean | string | undefined
-) => {
+  expirationDate: string | undefined,
+  isFree?: boolean | string,
+  showExp?: boolean | string
+): boolean => {
   if (!expirationDate) return false;
-  
+
+  const isFreeBool = isFree === true || String(isFree).toLowerCase() === "true";
+  const showExpBool = showExp === true || String(showExp).toLowerCase() === "true";
+  if (isFreeBool && !showExpBool) return false;
+
   const exp = parseFlexibleDate(expirationDate);
   if (!exp || isNaN(exp.getTime())) return false;
 
@@ -66,7 +70,7 @@ export const isAssetExpiringSoon = (
   return diffDays <= 30;
 };
 
-export const getRenewalTheme = (expirationDate: string, isFree?: boolean) => {
+export const getRenewalTheme = (expirationDate: string, isFree?: boolean): string => {
   if (!expirationDate) return "text-white/20";
 
   const exp = parseFlexibleDate(expirationDate);
