@@ -1,16 +1,18 @@
-import { Router } from "express";
-import { resend } from "../services/resend";
+import { Resend } from "resend";
 
-const router = Router();
-
-router.post("/", async (req, res) => {
-  const { name, company, email, phone, details, isSharedPage } = req.body;
-
-  if (!name || !email || !details) {
-    return res.status(400).json({ error: "Missing required fields (name, email, details)" });
-  }
-
+export async function onRequestPost(context: any) {
+  const env = context.env || {};
   try {
+    const body = await context.request.json();
+    const { name, company, email, phone, details, isSharedPage } = body;
+
+    if (!name || !email || !details) {
+      return new Response(
+        JSON.stringify({ error: "Missing required fields (name, email, details)" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const isImportant = !!isSharedPage;
     let subject = `New Contact Form Submission from ${name} (${company || "Individual"})`;
     if (isImportant) {
@@ -50,9 +52,11 @@ router.post("/", async (req, res) => {
     let emailErrorDetails: any = null;
 
     try {
+      const apiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
+      const resend = new Resend(apiKey);
       const emailResponse = await resend.emails.send({
         from: 'Zarco Studios Website <noreply@zarcostudios.com>',
-        to: ['pedro.cristo.webdeveloper@gmail.com'], // send to administrator
+        to: ['pedro.cristo.webdeveloper@gmail.com'],
         replyTo: email,
         subject: subject,
         html: htmlContent,
@@ -61,10 +65,9 @@ router.post("/", async (req, res) => {
       if (emailResponse.error) {
         emailStatus = "failed";
         emailErrorDetails = emailResponse.error;
-        console.error("Resend API rejected the contact form email with error:", JSON.stringify(emailResponse.error, null, 2));
+        console.error("Resend API rejected the contact form email:", emailResponse.error);
       } else {
         emailStatus = "sent";
-        console.log("Resend API sent contact form email successfully:", emailResponse.data);
       }
     } catch (emailErr: any) {
       emailStatus = "error";
@@ -72,16 +75,20 @@ router.post("/", async (req, res) => {
       console.warn("Resend failed to execute send, but we logged contact request:", emailErr);
     }
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Thank you for contacting us! We will get back to you shortly.",
-      emailStatus,
-      emailError: emailErrorDetails
-    });
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: "Thank you for contacting us! We will get back to you shortly.",
+        emailStatus,
+        emailError: emailErrorDetails
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   } catch (error: any) {
     console.error("Contact API error:", error);
-    res.status(500).json({ error: "Failed to send message", detail: error.message });
+    return new Response(
+      JSON.stringify({ error: "Failed to send message", detail: error.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
-});
-
-export default router;
+}

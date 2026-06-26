@@ -1,61 +1,101 @@
-import { Router } from "express";
-import { getDoc, getDocs, doc, collection } from "firebase/firestore";
-import { clientDb, initFirebase } from "../services/firebase";
-import { getStripeInstance, translateStripeError } from "../services/stripe";
-import { resend } from "../services/resend";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, getDoc, getDocs, collection, setDoc } from "firebase/firestore";
+import Stripe from "stripe";
+import { Resend } from "resend";
+import firebaseConfig from "../../../firebase-applet-config.json";
 
-const router = Router();
-
-// Subscription Payment Confirmation Route
-router.post("/confirm-payment", async (req, res) => {
-  const { 
-    projectId, 
-    clientEmail, 
-    clientName, 
-    projectName, 
-    subscriptionTitle, 
-    subscriptionPrice, 
-    subscriptionInterval, 
-    transactionId, 
-    lang,
-    cardNumber,
-    cardExpiry,
-    cardCvc,
-    cardName,
-    cardPostal
-  } = req.body;
-
-  if (!projectId || !clientEmail) {
-    return res.status(400).json({ error: "Missing required parameters" });
+// Standard Stripe translation logic
+export function translateStripeError(message: string, isPt: boolean): string {
+  if (!isPt) return message;
+  const msgLower = (message || "").toLowerCase();
+  if (msgLower.includes("sending credit card numbers directly") || msgLower.includes("raw card data") || msgLower.includes("unsafe")) {
+    return "O envio direto de dados do cartão de crédito para a API do Stripe não é considerado seguro de acordo com as normas PCI. Por favor, utilize os tokens de teste oficiais para fins de Sandbox ou ative o suporte a dados brutos no painel do Stripe.";
   }
+  if (msgLower.includes("was declined") || msgLower.includes("declined")) {
+    return "O seu cartão de crédito foi recusado.";
+  }
+  if (msgLower.includes("security code is incorrect") || msgLower.includes("cvc is incorrect") || msgLower.includes("cvc_incorrect")) {
+    return "O código de segurança (CVC) do seu cartão está incorreto.";
+  }
+  if (msgLower.includes("expiration year is invalid") || msgLower.includes("invalid_expiry_year")) {
+    return "O ano de validade do seu cartão de crédito é inválido.";
+  }
+  if (msgLower.includes("expiration month is invalid") || msgLower.includes("invalid_expiry_month")) {
+    return "O mês de validade do seu cartão de crédito é inválido.";
+  }
+  if (msgLower.includes("card has expired") || msgLower.includes("expired_card")) {
+    return "O seu cartão de crédito expirou.";
+  }
+  if (msgLower.includes("incorrect_number") || msgLower.includes("card number is incorrect")) {
+    return "O número do cartão de crédito introduzido está incorreto.";
+  }
+  if (msgLower.includes("invalid_number") || msgLower.includes("card number is invalid")) {
+    return "O número do cartão de crédito introduzido é inválido.";
+  }
+  if (msgLower.includes("insufficient_funds") || msgLower.includes("insufficient funds")) {
+    return "Saldo insuficiente no cartão de crédito fornecido.";
+  }
+  if (msgLower.includes("processing_error") || msgLower.includes("processing your card")) {
+    return "Ocorreu um erro ao processar o seu cartão de crédito. Por favor, tente novamente.";
+  }
+  return message;
+}
 
+export async function onRequestPost(context: any) {
+  const env = context.env || {};
   try {
+    const body = await context.request.json();
+    const { 
+      projectId, 
+      clientEmail, 
+      clientName, 
+      projectName, 
+      subscriptionTitle, 
+      subscriptionPrice, 
+      subscriptionInterval, 
+      transactionId, 
+      lang,
+      cardNumber,
+      cardExpiry,
+      cardCvc,
+      cardName,
+      cardPostal
+    } = body;
+
+    if (!projectId || !clientEmail) {
+      return new Response(
+        JSON.stringify({ error: "Missing required parameters" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const isPt = lang === "pt";
     const paidAtStr = new Date().toISOString();
 
-    // Get logo from settings if possible, or use a placeholder
+    // Initialize Firebase Client DB
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
     // Generate unique sequential transaction/receipt ID format: ZAR-[year]-SUB-00001
     const year = new Date().getFullYear();
     let nextNum = 1;
     try {
-      if (clientDb) {
-        const q = collection(clientDb, "clientProjects");
-        const snapshot = await getDocs(q);
-        let maxNum = 0;
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const stripeSubId = data?.stripeSubscriptionId;
-          if (stripeSubId && typeof stripeSubId === "string" && stripeSubId.startsWith(`ZAR-${year}-SUB-`)) {
-            const parts = stripeSubId.split("-");
-            const lastPart = parts[parts.length - 1];
-            const num = parseInt(lastPart, 10);
-            if (!isNaN(num) && num > maxNum) {
-              maxNum = num;
-            }
+      const q = collection(db, "clientProjects");
+      const snapshot = await getDocs(q);
+      let maxNum = 0;
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const stripeSubId = data?.stripeSubscriptionId;
+        if (stripeSubId && typeof stripeSubId === "string" && stripeSubId.startsWith(`ZAR-${year}-SUB-`)) {
+          const parts = stripeSubId.split("-");
+          const lastPart = parts[parts.length - 1];
+          const num = parseInt(lastPart, 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
           }
-        });
-        nextNum = maxNum + 1;
-      }
+        }
+      });
+      nextNum = maxNum + 1;
     } catch (err) {
       console.warn("Failed to generate unique sub id suffix:", err);
       nextNum = Math.floor(Math.random() * 1000) + 100;
@@ -65,10 +105,13 @@ router.post("/confirm-payment", async (req, res) => {
     let transactionIdToUse = customTransactionId;
 
     // Try processing with real Stripe SDK if we have key and card details
-    const stripe = getStripeInstance();
-    if (stripe && cardNumber) {
+    const stripeKey = env.STRIPE_SECRET_KEY;
+    if (stripeKey && cardNumber) {
       try {
         console.log(`[Server] Processing real Stripe transaction for customer: ${clientEmail}`);
+        const stripe = new Stripe(stripeKey, {
+          apiVersion: "2023-10-16" as any
+        });
         
         // Parse expiry date eg "12/28"
         const expParts = (cardExpiry || "12/28").split('/');
@@ -106,7 +149,7 @@ router.post("/confirm-payment", async (req, res) => {
         } catch (tokenErr: any) {
           console.warn("[Server] Direct card token creation blocked by Stripe's safety policies:", tokenErr.message);
           // If raw card processing is blocked by standard Stripe dashboard defaults, map to Stripe's mock tokens
-          if (tokenErr.message.includes("unsafe") || tokenErr.message.includes("raw card") || tokenErr.message.includes("directly") || tokenErr.message.includes("PCI") || (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.startsWith("sk_test"))) {
+          if (tokenErr.message.includes("unsafe") || tokenErr.message.includes("raw card") || tokenErr.message.includes("directly") || tokenErr.message.includes("PCI") || (stripeKey.startsWith("sk_test"))) {
             console.log(`[Server] Falling back to official Stripe test token: ${testToken} for seamless Sandbox processing.`);
             tokenId = testToken;
           } else {
@@ -185,46 +228,39 @@ router.post("/confirm-payment", async (req, res) => {
         });
 
         console.log(`[Server] Stripe subscription created successfully: ${stripeSub.id}`);
-        // Note: We deliberately preserve customTransactionId (ZAR-[year]-SUB-[count]) for invoice/receipt/db tracking to meet user's requirement.
       } catch (stripeErr: any) {
         console.error("[Server] Stripe direct process error:", stripeErr);
         const translatedMsg = translateStripeError(stripeErr.message || "An error occurred with Stripe processing.", isPt);
-        return res.status(402).json({ 
-          error: translatedMsg,
-          detail: stripeErr.message 
-        });
+        return new Response(
+          JSON.stringify({ 
+            error: translatedMsg,
+            detail: stripeErr.message 
+          }),
+          { status: 402, headers: { "Content-Type": "application/json" } }
+        );
       }
     }
 
-    const adminDb = initFirebase();
-    
-    // Update Database via Admin SDK
-    if (adminDb) {
-      console.log(`[Server] Updating db subscription status for project ${projectId}`);
-      try {
-        const projRef = adminDb.collection("clientProjects").doc(projectId);
-        await projRef.set({
-          subscriptionPaid: true,
-          subscriptionPaidAt: paidAtStr,
-          stripeSubscriptionId: transactionIdToUse
-        }, { merge: true });
-        console.log("[Server] Database write succeeded via Admin SDK.");
-      } catch (dbErr: any) {
-        console.warn("[Server] Firebase Admin SDK database write failed (probably due to IAM permissions):", dbErr.message);
-        // Do not fail the whole request since client-side will also attempt to synchronize state
-      }
-    } else {
-      console.warn("[Server] Firebase Admin SDK is not initialized, skipped database merge.");
+    // Update Database via Client Firestore SDK
+    console.log(`[Server] Updating db subscription status for project ${projectId}`);
+    try {
+      const projRef = doc(db, "clientProjects", projectId);
+      await setDoc(projRef, {
+        subscriptionPaid: true,
+        subscriptionPaidAt: paidAtStr,
+        stripeSubscriptionId: transactionIdToUse
+      }, { merge: true });
+      console.log("[Server] Database write succeeded via Client SDK.");
+    } catch (dbErr: any) {
+      console.warn("[Server] Database write failed:", dbErr.message);
     }
 
     // Get logo from settings if possible, or use a placeholder
     let logoUrl = null;
     try {
-      if (clientDb) {
-        const settingsDoc = await getDoc(doc(clientDb, "settings", "company-legal"));
-        if (settingsDoc.exists()) {
-          logoUrl = settingsDoc.data()?.logoUrl;
-        }
+      const settingsDoc = await getDoc(doc(db, "settings", "company-legal"));
+      if (settingsDoc.exists()) {
+        logoUrl = settingsDoc.data()?.logoUrl;
       }
     } catch (settingsErr) {
       console.warn("Failed to fetch settings for logo in confirm-payment:", settingsErr);
@@ -262,7 +298,7 @@ router.post("/confirm-payment", async (req, res) => {
     const monthPortuguese = ptMonthMap[monthEnglish] || monthEnglish;
     const displayCurrentMonth = isPt ? monthPortuguese : monthEnglish;
 
-    // 1. Email to customer
+    // Email to customer
     const clientSubject = isPt 
       ? "Subscrição Ativada com Sucesso - Zarco Studios" 
       : "Subscription Activated Successfully - Zarco Studios";
@@ -345,12 +381,10 @@ router.post("/confirm-payment", async (req, res) => {
       </div>
     `;
 
-    // Safe, robust independent email sending with fallback mechanisms
     let clientEmailStatus = "not_sent";
-
-    // 1. Send Email to Customer
     try {
-      console.log(`[Server] Attempting client email to ${clientEmail}`);
+      const resendApiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
+      const resend = new Resend(resendApiKey);
       let clientResponse = await resend.emails.send({
         from: 'Zarco Studios <no-reply@zarcostudios.com>',
         to: [clientEmail],
@@ -358,7 +392,6 @@ router.post("/confirm-payment", async (req, res) => {
         html: clientHtml,
       });
 
-      // Fallback if domain is unverified/rejected (e.g., error is returned)
       if (clientResponse.error) {
         console.warn("[Server] Client email failed using custom domain. Retrying with onboarding@resend.dev...", clientResponse.error);
         clientResponse = await resend.emails.send({
@@ -373,7 +406,6 @@ router.post("/confirm-payment", async (req, res) => {
         console.error("[Server] Client email failed completely:", clientResponse.error);
         clientEmailStatus = `failed: ${JSON.stringify(clientResponse.error)}`;
       } else {
-        console.log("[Server] Client email sent successfully:", clientResponse.data);
         clientEmailStatus = "sent";
       }
     } catch (clientErr: any) {
@@ -381,19 +413,22 @@ router.post("/confirm-payment", async (req, res) => {
       clientEmailStatus = `error: ${clientErr.message}`;
     }
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Payment processed, DB synchronized, and client email processed.",
-      paidAt: paidAtStr,
-      transactionId: transactionIdToUse,
-      clientEmailStatus,
-      adminEmailStatus: "skipped_by_user_request"
-    });
-
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: "Payment processed, DB synchronized, and client email processed.",
+        paidAt: paidAtStr,
+        transactionId: transactionIdToUse,
+        clientEmailStatus,
+        adminEmailStatus: "skipped_by_user_request"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   } catch (error: any) {
     console.error("[Server] Error confirming payment:", error);
-    res.status(500).json({ error: error.message || "Failed to confirm payment" });
+    return new Response(
+      JSON.stringify({ error: error.message || "Failed to confirm payment" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
-});
-
-export default router;
+}
