@@ -1,7 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, getDocs, collection } from "firebase/firestore";
-import { Resend } from "resend";
-import firebaseConfig from "../../../firebase-applet-config.json";
+import { getDocument, listDocuments } from "../../_lib/firestore-rest";
+import { sendEmailViaFetch } from "../../_lib/resend-rest";
 
 export async function onRequestPost(context: any) {
   const env = context.env || {};
@@ -16,28 +14,24 @@ export async function onRequestPost(context: any) {
       );
     }
 
-    // Initialize Firebase client DB
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-
-    // 1. Determine target emails
+    // 1. Determine target emails using REST API helpers
     let recipients: { email: string; lang: string }[] = [];
     
     if (emails && Array.isArray(emails) && emails.length > 0) {
       recipients = emails.map((e: string) => ({ email: e, lang: lang === "all" ? "en" : lang }));
     } else if (lang === "all") {
-      const [enSnap, ptSnap] = await Promise.all([
-        getDocs(collection(db, "subscribers")),
-        getDocs(collection(db, "pt_subscribers"))
+      const [enSubs, ptSubs] = await Promise.all([
+        listDocuments("subscribers"),
+        listDocuments("pt_subscribers")
       ]);
       recipients = [
-        ...enSnap.docs.filter(d => d.data().active !== false).map(d => ({ email: d.data().email, lang: "en" })),
-        ...ptSnap.docs.filter(d => d.data().active !== false).map(d => ({ email: d.data().email, lang: "pt" }))
+        ...enSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: "en" })),
+        ...ptSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: "pt" }))
       ];
     } else {
       const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
-      const snapshot = await getDocs(collection(db, collectionName));
-      recipients = snapshot.docs.filter(d => d.data().active !== false).map(d => ({ email: d.data().email, lang: lang }));
+      const subs = await listDocuments(collectionName);
+      recipients = subs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: lang }));
     }
 
     if (recipients.length === 0) {
@@ -50,8 +44,8 @@ export async function onRequestPost(context: any) {
     // 2. Get company logo for branding
     let logoUrl = null;
     try {
-      const settingsSnap = await getDoc(doc(db, "settings", "company-legal"));
-      logoUrl = settingsSnap.exists() ? settingsSnap.data()?.logoUrl : null;
+      const settingsDoc = await getDocument("settings", "company-legal");
+      logoUrl = settingsDoc ? settingsDoc.logoUrl : null;
     } catch (e) {
       console.warn("Failed to fetch settings for logo in newsletter:", e);
     }
@@ -93,32 +87,23 @@ export async function onRequestPost(context: any) {
       `;
     };
 
-    // 4. Send emails
-    const apiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
-    const resend = new Resend(apiKey);
+    // 4. Send emails using direct fetch
     let sentCount = 0;
     let failCount = 0;
     const errorsList: any[] = [];
 
     for (const recipient of recipients) {
       try {
-        const emailResponse = await resend.emails.send({
+        await sendEmailViaFetch(env, {
           from: 'Zarco Studios Newsletter <hello@zarcostudios.com>',
           to: [recipient.email],
           subject: subject,
           html: getHtmlTemplate(recipient.email, recipient.lang),
         });
-
-        if (emailResponse.error) {
-          console.error(`Failed to send newsletter to ${recipient.email} (Resend API Error):`, emailResponse.error);
-          errorsList.push({ email: recipient.email, error: emailResponse.error });
-          failCount++;
-        } else {
-          sentCount++;
-        }
+        sentCount++;
       } catch (err: any) {
-        console.error(`Failed to send newsletter to ${recipient.email} (Execution Error):`, err);
-        errorsList.push({ email: recipient.email, error: { message: err.message, name: err.name } });
+        console.error(`Failed to send newsletter to ${recipient.email}:`, err);
+        errorsList.push({ email: recipient.email, error: { message: err.message } });
         failCount++;
       }
     }

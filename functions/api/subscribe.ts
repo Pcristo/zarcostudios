@@ -1,7 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { Resend } from "resend";
-import firebaseConfig from "../../firebase-applet-config.json";
+import { getDocument, setDocument } from "../_lib/firestore-rest";
+import { sendEmailViaFetch } from "../_lib/resend-rest";
 
 export async function onRequestPost(context: any) {
   const env = context.env || {};
@@ -18,14 +16,10 @@ export async function onRequestPost(context: any) {
 
     const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
 
-    // Initialize Firebase client DB
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    // Use Firestore REST API instead of client SDK
+    const existingSub = await getDocument(collectionName, email);
 
-    const subDocRef = doc(db, collectionName, email);
-    const docSnap = await getDoc(subDocRef);
-
-    if (docSnap.exists()) {
+    if (existingSub) {
       return new Response(
         JSON.stringify({ 
           error: "Already subscribed", 
@@ -35,14 +29,14 @@ export async function onRequestPost(context: any) {
       );
     }
 
-    await setDoc(subDocRef, {
+    await setDocument(collectionName, email, {
       email,
       lang,
       active: true,
-      subscribedAt: serverTimestamp(),
+      subscribedAt: new Date(), // Use raw Date object so helper maps to timestampValue and satisfies security rules
     });
 
-    // Send Email via Resend
+    // Send Email via Resend Fetch API
     const isPt = lang === "pt";
     const subject = isPt ? "Obrigado por se inscrever!" : "Thanks for subscribing!";
     const greeting = isPt ? "Olá," : "Hello,";
@@ -53,15 +47,14 @@ export async function onRequestPost(context: any) {
     
     const unsubscribeText = isPt ? "Remover subscrição" : "Unsubscribe";
     
-    // In Cloudflare Pages Functions, we construct the url dynamically from the request object
     const requestUrl = new URL(context.request.url);
     const unsubscribeUrl = `${requestUrl.protocol}//${requestUrl.host}/unsubscribe?email=${encodeURIComponent(email)}&lang=${lang}`;
     
     let logoUrl = null;
     try {
-      const settingsDoc = await getDoc(doc(db, "settings", "company-legal"));
-      if (settingsDoc.exists()) {
-        logoUrl = settingsDoc.data()?.logoUrl;
+      const settingsDoc = await getDocument("settings", "company-legal");
+      if (settingsDoc) {
+        logoUrl = settingsDoc.logoUrl;
       }
     } catch (settingsErr) {
       console.warn("Failed to fetch settings for logo:", settingsErr);
@@ -75,7 +68,7 @@ export async function onRequestPost(context: any) {
         <p>${message}</p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
         <p style="font-size: 11px; color: #999; margin: 0 0 15px 0;">
-          ${isPt ? 'Não responda a este e-mail. Para qualquer dúvida, envie um e-mail para info@zarcostudios.com ou visite <a href="https://zarcostudios.com" style="color: #999; text-decoration: underline;">zarcostudios.com</a>.' : 'No reply to this email. For any inquiries, please email info@zarcostudios.com or visit <a href="https://zarcostudios.com" style="color: #999; text-decoration: underline;">zarcostudios.com</a>.'}
+          ${isPt ? 'Não responda a este e-mail. Para qualquer dúvida, envie um e-mail para info@zarcostudios.com or visite <a href="https://zarcostudios.com" style="color: #999; text-decoration: underline;">zarcostudios.com</a>.' : 'No reply to this email. For any inquiries, please email info@zarcostudios.com or visit <a href="https://zarcostudios.com" style="color: #999; text-decoration: underline;">zarcostudios.com</a>.'}
         </p>
         <p style="font-size: 12px; color: #888; margin-bottom: 10px;">&copy; ${new Date().getFullYear()} Zarco Studios. ${copyRights}</p>
         <p style="font-size: 11px; color: #999; margin: 0;">
@@ -88,22 +81,13 @@ export async function onRequestPost(context: any) {
     let emailErrorDetails: any = null;
 
     try {
-      const apiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
-      const resend = new Resend(apiKey);
-      const emailResponse = await resend.emails.send({
+      await sendEmailViaFetch(env, {
         from: 'Zarco Studios <hello@zarcostudios.com>',
         to: [email],
         subject: subject,
         html: htmlContent,
       });
-
-      if (emailResponse.error) {
-        emailStatus = "failed";
-        emailErrorDetails = emailResponse.error;
-        console.error("Resend API rejected the email request with error:", emailResponse.error);
-      } else {
-        emailStatus = "sent";
-      }
+      emailStatus = "sent";
     } catch (emailError: any) {
       emailStatus = "error";
       emailErrorDetails = { message: emailError.message, name: emailError.name };

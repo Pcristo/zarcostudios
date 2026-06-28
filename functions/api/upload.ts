@@ -1,11 +1,20 @@
-import { v2 as cloudinary } from "cloudinary";
+async function generateCloudinarySignature(params: Record<string, string>, apiSecret: string): Promise<string> {
+  const sortedKeys = Object.keys(params).sort();
+  const signatureString = sortedKeys.map(k => `${k}=${params[k]}`).join('&') + apiSecret;
+  
+  // SHA-1 digest using native Web Crypto API (fully supported on Cloudflare Workers/Pages)
+  const msgUint8 = new TextEncoder().encode(signatureString);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 export async function onRequestPost(context: any) {
   const env = context.env || {};
   try {
     const formData = await context.request.formData();
     const file: any = formData.get("file");
-    const folder = formData.get("folder") || "zarco-studio";
+    const folder = (formData.get("folder") || "zarco-studio") as string;
 
     if (!file) {
       return new Response(JSON.stringify({ error: "No file uploaded" }), {
@@ -14,32 +23,40 @@ export async function onRequestPost(context: any) {
       });
     }
 
-    const hasCloudinary = !!(
-      env.VITE_CLOUDINARY_CLOUD_NAME && 
-      env.VITE_CLOUDINARY_API_KEY && 
-      env.CLOUDINARY_API_SECRET
-    );
+    const cloudName = env.VITE_CLOUDINARY_CLOUD_NAME;
+    const apiKey = env.VITE_CLOUDINARY_API_KEY;
+    const apiSecret = env.CLOUDINARY_API_SECRET;
+
+    const hasCloudinary = !!(cloudName && apiKey && apiSecret);
 
     if (hasCloudinary) {
       try {
-        cloudinary.config({
-          cloud_name: env.VITE_CLOUDINARY_CLOUD_NAME,
-          api_key: env.VITE_CLOUDINARY_API_KEY,
-          api_secret: env.CLOUDINARY_API_SECRET,
+        const timestamp = String(Math.floor(Date.now() / 1000));
+        
+        // Generate signature
+        const signature = await generateCloudinarySignature({ folder, timestamp }, apiSecret);
+
+        // Build a fresh multipart formData to post to Cloudinary REST endpoint
+        const cloudinaryForm = new FormData();
+        cloudinaryForm.append("file", file);
+        cloudinaryForm.append("folder", folder);
+        cloudinaryForm.append("timestamp", timestamp);
+        cloudinaryForm.append("api_key", apiKey);
+        cloudinaryForm.append("signature", signature);
+
+        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+        
+        const res = await fetch(cloudinaryUrl, {
+          method: "POST",
+          body: cloudinaryForm,
         });
 
-        const arrayBuffer = await file.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-        let binary = "";
-        for (let i = 0; i < uint8Array.byteLength; i++) {
-          binary += String.fromCharCode(uint8Array[i]);
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(`Cloudinary REST API error: ${res.status} ${errorText}`);
         }
-        const base64 = btoa(binary);
-        const fileBase64 = `data:${file.type};base64,${base64}`;
 
-        const uploadResponse = await cloudinary.uploader.upload(fileBase64, {
-          folder: folder,
-        });
+        const uploadResponse = await res.json();
 
         return new Response(JSON.stringify({ url: uploadResponse.secure_url }), {
           status: 200,

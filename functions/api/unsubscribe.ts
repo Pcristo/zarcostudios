@@ -1,6 +1,4 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
-import firebaseConfig from "../../firebase-applet-config.json";
+import { getDocument, setDocument } from "../_lib/firestore-rest";
 
 export async function onRequestGet(context: any) {
   try {
@@ -14,21 +12,16 @@ export async function onRequestGet(context: any) {
 
     const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
 
-    // Initialize Firebase client DB
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    // Check if the subscriber exists in primary collection
+    const subDoc = await getDocument(collectionName, email);
 
-    const subRef = doc(db, collectionName, email);
-    const docSnap = await getDoc(subRef);
-
-    if (docSnap.exists()) {
-      await setDoc(subRef, { active: false }, { merge: true });
+    if (subDoc) {
+      await setDocument(collectionName, email, { active: false }, true);
     } else if (lang !== "all") {
       const altCollection = lang === "pt" ? "subscribers" : "pt_subscribers";
-      const altRef = doc(db, altCollection, email);
-      const altSnap = await getDoc(altRef);
-      if (altSnap.exists()) {
-        await setDoc(altRef, { active: false }, { merge: true });
+      const altDoc = await getDocument(altCollection, email);
+      if (altDoc) {
+        await setDocument(altCollection, email, { active: false }, true);
       }
     }
 

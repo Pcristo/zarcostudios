@@ -1,8 +1,6 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, getDocs, collection, setDoc } from "firebase/firestore";
 import Stripe from "stripe";
-import { Resend } from "resend";
-import firebaseConfig from "../../../firebase-applet-config.json";
+import { getDocument, setDocument, listDocuments } from "../../_lib/firestore-rest";
+import { sendEmailViaFetch } from "../../_lib/resend-rest";
 
 // Standard Stripe translation logic
 export function translateStripeError(message: string, isPt: boolean): string {
@@ -72,20 +70,14 @@ export async function onRequestPost(context: any) {
     const isPt = lang === "pt";
     const paidAtStr = new Date().toISOString();
 
-    // Initialize Firebase Client DB
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-
     // Generate unique sequential transaction/receipt ID format: ZAR-[year]-SUB-00001
     const year = new Date().getFullYear();
     let nextNum = 1;
     try {
-      const q = collection(db, "clientProjects");
-      const snapshot = await getDocs(q);
+      const snapshot = await listDocuments("clientProjects");
       let maxNum = 0;
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        const stripeSubId = data?.stripeSubscriptionId;
+      snapshot.forEach((pData: any) => {
+        const stripeSubId = pData?.stripeSubscriptionId;
         if (stripeSubId && typeof stripeSubId === "string" && stripeSubId.startsWith(`ZAR-${year}-SUB-`)) {
           const parts = stripeSubId.split("-");
           const lastPart = parts[parts.length - 1];
@@ -148,7 +140,6 @@ export async function onRequestPost(context: any) {
           console.log(`[Server] Raw card token created successfully: ${tokenId}`);
         } catch (tokenErr: any) {
           console.warn("[Server] Direct card token creation blocked by Stripe's safety policies:", tokenErr.message);
-          // If raw card processing is blocked by standard Stripe dashboard defaults, map to Stripe's mock tokens
           if (tokenErr.message.includes("unsafe") || tokenErr.message.includes("raw card") || tokenErr.message.includes("directly") || tokenErr.message.includes("PCI") || (stripeKey.startsWith("sk_test"))) {
             console.log(`[Server] Falling back to official Stripe test token: ${testToken} for seamless Sandbox processing.`);
             tokenId = testToken;
@@ -162,13 +153,11 @@ export async function onRequestPost(context: any) {
         let customer;
         if (existingCustomers.data && existingCustomers.data.length > 0) {
           customer = existingCustomers.data[0];
-          // Attach card to existing customer as source
           try {
             await stripe.customers.createSource(customer.id, { source: tokenId });
           } catch (sourceErr: any) {
             console.warn("[Server] Could not attach card source, creating or reuse customer as is:", sourceErr.message);
           }
-          // Update customer name and metadata on Stripe
           try {
             await stripe.customers.update(customer.id, {
               name: clientName || cardName || customer.name || "Valued Customer",
@@ -194,7 +183,7 @@ export async function onRequestPost(context: any) {
           });
         }
 
-        // 3. Create Product & price dynamically so it exists in their Stripe dashboard!
+        // 3. Create Product & price dynamically
         const product = await stripe.products.create({
           name: `${projectName || "Project"} - ${subscriptionTitle || "Subscription"}`,
           description: `Zarco Studios Dedicated Subscription for ${projectName || "Project"}`,
@@ -241,16 +230,15 @@ export async function onRequestPost(context: any) {
       }
     }
 
-    // Update Database via Client Firestore SDK
+    // Update Database via REST API helper
     console.log(`[Server] Updating db subscription status for project ${projectId}`);
     try {
-      const projRef = doc(db, "clientProjects", projectId);
-      await setDoc(projRef, {
+      await setDocument("clientProjects", projectId, {
         subscriptionPaid: true,
         subscriptionPaidAt: paidAtStr,
         stripeSubscriptionId: transactionIdToUse
-      }, { merge: true });
-      console.log("[Server] Database write succeeded via Client SDK.");
+      }, true); // merge = true
+      console.log("[Server] Database write succeeded via REST API helper.");
     } catch (dbErr: any) {
       console.warn("[Server] Database write failed:", dbErr.message);
     }
@@ -258,9 +246,9 @@ export async function onRequestPost(context: any) {
     // Get logo from settings if possible, or use a placeholder
     let logoUrl = null;
     try {
-      const settingsDoc = await getDoc(doc(db, "settings", "company-legal"));
-      if (settingsDoc.exists()) {
-        logoUrl = settingsDoc.data()?.logoUrl;
+      const settingsDoc = await getDocument("settings", "company-legal");
+      if (settingsDoc) {
+        logoUrl = settingsDoc.logoUrl;
       }
     } catch (settingsErr) {
       console.warn("Failed to fetch settings for logo in confirm-payment:", settingsErr);
@@ -383,34 +371,27 @@ export async function onRequestPost(context: any) {
 
     let clientEmailStatus = "not_sent";
     try {
-      const resendApiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
-      const resend = new Resend(resendApiKey);
-      let clientResponse = await resend.emails.send({
+      await sendEmailViaFetch(env, {
         from: 'Zarco Studios <no-reply@zarcostudios.com>',
         to: [clientEmail],
         subject: clientSubject,
         html: clientHtml,
       });
-
-      if (clientResponse.error) {
-        console.warn("[Server] Client email failed using custom domain. Retrying with onboarding@resend.dev...", clientResponse.error);
-        clientResponse = await resend.emails.send({
+      clientEmailStatus = "sent";
+    } catch (clientErr: any) {
+      console.warn("[Server] Client email failed using custom domain. Retrying with onboarding@resend.dev...", clientErr.message);
+      try {
+        await sendEmailViaFetch(env, {
           from: 'Zarco Studios <onboarding@resend.dev>',
           to: [clientEmail],
           subject: clientSubject,
           html: clientHtml,
         });
-      }
-
-      if (clientResponse.error) {
-        console.error("[Server] Client email failed completely:", clientResponse.error);
-        clientEmailStatus = `failed: ${JSON.stringify(clientResponse.error)}`;
-      } else {
         clientEmailStatus = "sent";
+      } catch (retryErr: any) {
+        console.error("[Server] Client email failed completely:", retryErr);
+        clientEmailStatus = `failed: ${retryErr.message}`;
       }
-    } catch (clientErr: any) {
-      console.error("[Server] Exception while sending client email:", clientErr);
-      clientEmailStatus = `error: ${clientErr.message}`;
     }
 
     return new Response(

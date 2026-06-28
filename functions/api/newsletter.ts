@@ -1,7 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { Resend } from "resend";
-import firebaseConfig from "../../firebase-applet-config.json";
+import { getDocument, setDocument } from "../_lib/firestore-rest";
+import { sendEmailViaFetch } from "../_lib/resend-rest";
 
 // Handle direct access to /api/newsletter
 export async function onRequestPost(context: any) {
@@ -18,13 +16,10 @@ export async function onRequestPost(context: any) {
     }
 
     const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
-    const subDocRef = doc(db, collectionName, email);
-    const docSnap = await getDoc(subDocRef);
+    const existingSub = await getDocument(collectionName, email);
 
-    if (docSnap.exists()) {
+    if (existingSub) {
       return new Response(
         JSON.stringify({ 
           error: "Already subscribed", 
@@ -34,11 +29,11 @@ export async function onRequestPost(context: any) {
       );
     }
 
-    await setDoc(subDocRef, {
+    await setDocument(collectionName, email, {
       email,
       lang,
       active: true,
-      subscribedAt: serverTimestamp(),
+      subscribedAt: new Date(), // Use raw Date object so helper maps to timestampValue and satisfies security rules
     });
 
     const isPt = lang === "pt";
@@ -60,9 +55,7 @@ export async function onRequestPost(context: any) {
       </div>
     `;
 
-    const apiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
-    const resend = new Resend(apiKey);
-    await resend.emails.send({
+    await sendEmailViaFetch(env, {
       from: 'Zarco Studios <hello@zarcostudios.com>',
       to: [email],
       subject: subject,

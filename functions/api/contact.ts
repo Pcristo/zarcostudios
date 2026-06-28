@@ -1,4 +1,4 @@
-import { Resend } from "resend";
+import { sendEmailViaFetch } from "../_lib/resend-rest";
 
 export async function onRequestPost(context: any) {
   const env = context.env || {};
@@ -52,23 +52,13 @@ export async function onRequestPost(context: any) {
     let emailErrorDetails: any = null;
 
     try {
-      const apiKey = env.RESEND_API_KEY || "re_EvsqBCv6_Q9Qfe6jBsEErweyqMHJu8LtF";
-      const resend = new Resend(apiKey);
-      const emailResponse = await resend.emails.send({
+      await sendEmailViaFetch(env, {
         from: 'Zarco Studios Website <noreply@zarcostudios.com>',
         to: ['pedro.cristo.webdeveloper@gmail.com'],
-        replyTo: email,
         subject: subject,
         html: htmlContent,
       });
-
-      if (emailResponse.error) {
-        emailStatus = "failed";
-        emailErrorDetails = emailResponse.error;
-        console.error("Resend API rejected the contact form email:", emailResponse.error);
-      } else {
-        emailStatus = "sent";
-      }
+      emailStatus = "sent";
     } catch (emailErr: any) {
       emailStatus = "error";
       emailErrorDetails = { message: emailErr.message, name: emailErr.name };
