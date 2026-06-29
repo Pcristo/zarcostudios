@@ -379,10 +379,10 @@ export async function onRequestPost(context: any) {
       });
       clientEmailStatus = "sent";
     } catch (clientErr: any) {
-      console.warn("[Server] Client email failed using custom domain. Retrying with onboarding@resend.dev...", clientErr.message);
+      console.warn("[Server] Client email failed using custom domain. Retrying with no-reply@zarcostudios.com...", clientErr.message);
       try {
         await sendEmailViaFetch(env, {
-          from: 'Zarco Studios <onboarding@resend.dev>',
+          from: 'Zarco Studios <no-reply@zarcostudios.com>',
           to: [clientEmail],
           subject: clientSubject,
           html: clientHtml,
