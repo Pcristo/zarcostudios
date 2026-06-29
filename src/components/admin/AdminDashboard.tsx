@@ -1370,6 +1370,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         let toastType: 'success' | 'warning' | 'error' = "success";
 
         if (data.sentCount !== undefined && data.failCount !== undefined) {
+          const detailSuffix = data.errors && data.errors.length > 0 
+            ? ` (Reason: ${data.errors[0].error?.message || "Unknown error"})` 
+            : "";
           if (data.sentCount > 0 && data.failCount === 0) {
             feedbackMessage = isPt
               ? `Campanha enviada com sucesso para ${data.sentCount} destinatários.`
@@ -1377,13 +1380,13 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
             toastType = "success";
           } else if (data.sentCount === 0 && data.failCount > 0) {
             feedbackMessage = isPt
-              ? `Falha ao enviar campanha para os ${data.failCount} destinatários.`
-              : `Failed to send newsletter email to all ${data.failCount} recipients.`;
+              ? `Falha ao enviar campanha para os ${data.failCount} destinatários.${detailSuffix}`
+              : `Failed to send newsletter email to all ${data.failCount} recipients.${detailSuffix}`;
             toastType = "error";
           } else if (data.failCount > 0) {
             feedbackMessage = isPt
-              ? `Campanha parcialmente enviada. Sucesso: ${data.sentCount}, Falhas: ${data.failCount}.`
-              : `Newsletter partially sent. Successfully sent to ${data.sentCount}, but ${data.failCount} failed.`;
+              ? `Campanha parcialmente enviada. Sucesso: ${data.sentCount}, Falhas: ${data.failCount}.${detailSuffix}`
+              : `Newsletter partially sent. Successfully sent to ${data.sentCount}, but ${data.failCount} failed.${detailSuffix}`;
             toastType = "warning";
           }
         }

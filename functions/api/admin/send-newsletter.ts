@@ -14,6 +14,10 @@ export async function onRequestPost(context: any) {
       );
     }
 
+    // Extract ID token if passed from admin panel
+    const authHeader = context.request.headers.get("Authorization") || "";
+    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
     // 1. Determine target emails using REST API helpers
     let recipients: { email: string; lang: string }[] = [];
     
@@ -21,17 +25,17 @@ export async function onRequestPost(context: any) {
       recipients = emails.map((e: string) => ({ email: e, lang: lang === "all" ? "en" : lang }));
     } else if (lang === "all") {
       const [enSubs, ptSubs] = await Promise.all([
-        listDocuments("subscribers"),
-        listDocuments("pt_subscribers")
+        listDocuments("subscribers", idToken),
+        listDocuments("pt_subscribers", idToken)
       ]);
       recipients = [
-        ...enSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: "en" })),
-        ...ptSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: "pt" }))
+        ...enSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email || d.id, lang: "en" })),
+        ...ptSubs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email || d.id, lang: "pt" }))
       ];
     } else {
       const collectionName = lang === "pt" ? "pt_subscribers" : "subscribers";
-      const subs = await listDocuments(collectionName);
-      recipients = subs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email, lang: lang }));
+      const subs = await listDocuments(collectionName, idToken);
+      recipients = subs.filter((d: any) => d.active !== false).map((d: any) => ({ email: d.email || d.id, lang: lang }));
     }
 
     if (recipients.length === 0) {
@@ -44,7 +48,7 @@ export async function onRequestPost(context: any) {
     // 2. Get company logo for branding
     let logoUrl = null;
     try {
-      const settingsDoc = await getDocument("settings", "company-legal");
+      const settingsDoc = await getDocument("settings", "company-legal", idToken);
       logoUrl = settingsDoc ? settingsDoc.logoUrl : null;
     } catch (e) {
       console.warn("Failed to fetch settings for logo in newsletter:", e);

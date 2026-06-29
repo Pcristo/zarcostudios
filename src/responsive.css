@@ -1,0 +1,78 @@
+/********************************
+*       RESPONSIVE CSS        *
+*******************************/
+
+@media only screen and (max-width: 1250px) {
+
+    /* General Styles */
+    .margin-top-80-1250px {
+        margin-top: -80px !important;
+    }
+
+}
+
+@media only screen and (max-width: 960px) {
+
+    /* General Styles */
+    .padding-25-960px {
+        padding: 25px !important;
+    }
+
+    .padding-15-960px {
+        padding: 25px !important;
+    }
+
+    /* Hero Section */
+    .hero-section .title {
+        font-size: 5rem !important;
+    }
+
+}
+
+
+@media only screen and (max-width: 768px) {
+
+    /* Hero Section */
+    .hero-section .main-title {
+        font-size: 4rem !important;
+    }
+
+    .hero-section .container {
+        padding: 0 1rem !important;
+    }
+
+    #contact  .container{
+        padding: 0 !important;
+    }
+    #contact  .info-container{
+        padding: 0 1rem !important;
+    }
+
+     #contact .glass-card {
+        padding: 2rem !important;
+    }
+
+}
+
+@media only screen and (max-width: 639px) {
+
+    .newsletter .btn {
+        top: 40px !important;
+        position: relative !important;
+    }
+
+    .newsletter form {
+        padding: 0.5rem !important;
+        height: 70px !important;
+    }
+
+}
+
+@media only screen and (max-width: 560px) {
+
+    /* Hero Section */
+    .hero-section .main-title {
+        font-size: 3.5rem !important;
+    }
+
+}

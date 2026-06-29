@@ -180,14 +180,16 @@ service cloud.firestore {
     }
 
     match /subscribers/{email} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if isAdmin();
       allow delete: if isAdmin();
       allow create: if isValidSubscriber(incoming()) && incoming().email == email;
       allow update: if isAdmin() || (incoming().active == false && incoming().email == email);
     }
 
     match /pt_subscribers/{email} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if isAdmin();
       allow delete: if isAdmin();
       allow create: if isValidSubscriber(incoming()) && incoming().email == email;
       allow update: if isAdmin() || (incoming().active == false && incoming().email == email);

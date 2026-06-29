@@ -78,9 +78,13 @@ function fromFirestoreFields(fields: any): any {
   return obj;
 }
 
-export async function getDocument(collectionName: string, docId: string) {
+export async function getDocument(collectionName: string, docId: string, idToken?: string | null) {
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${collectionName}/${encodeURIComponent(docId)}?key=${apiKey}`;
-  const res = await fetch(url);
+  const headers: any = {};
+  if (idToken) {
+    headers["Authorization"] = `Bearer ${idToken}`;
+  }
+  const res = await fetch(url, { headers });
   if (res.status === 404) return null;
   if (!res.ok) {
     const errText = await res.text();
@@ -93,7 +97,7 @@ export async function getDocument(collectionName: string, docId: string) {
   };
 }
 
-export async function setDocument(collectionName: string, docId: string, data: any, merge = false) {
+export async function setDocument(collectionName: string, docId: string, data: any, merge = false, idToken?: string | null) {
   let url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${collectionName}/${encodeURIComponent(docId)}?key=${apiKey}`;
   if (merge) {
     const keys = Object.keys(data);
@@ -104,11 +108,15 @@ export async function setDocument(collectionName: string, docId: string, data: a
   }
   
   const fields = toFirestoreFields(data);
+  const headers: any = {
+    "Content-Type": "application/json"
+  };
+  if (idToken) {
+    headers["Authorization"] = `Bearer ${idToken}`;
+  }
   const res = await fetch(url, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers,
     body: JSON.stringify({ fields })
   });
   
@@ -124,22 +132,44 @@ export async function setDocument(collectionName: string, docId: string, data: a
   };
 }
 
-export async function listDocuments(collectionName: string) {
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${collectionName}?key=${apiKey}`;
-  const res = await fetch(url);
+export async function listDocuments(collectionName: string, idToken?: string | null) {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents:runQuery?key=${apiKey}`;
+  const headers: any = {
+    "Content-Type": "application/json"
+  };
+  if (idToken) {
+    headers["Authorization"] = `Bearer ${idToken}`;
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: collectionName }]
+      }
+    })
+  });
+  
   if (res.status === 404) return [];
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`Firestore list error: ${res.status} ${errText}`);
   }
+  
   const data = await res.json();
-  const docs = data.documents || [];
-  return docs.map((d: any) => {
-    const parts = d.name.split("/");
-    const id = parts[parts.length - 1];
-    return {
-      id,
-      ...fromFirestoreFields(d.fields)
-    };
-  });
+  if (!Array.isArray(data)) return [];
+  
+  const list: any[] = [];
+  for (const item of data) {
+    if (item && item.document && item.document.name) {
+      const d = item.document;
+      const parts = d.name.split("/");
+      const id = parts[parts.length - 1];
+      list.push({
+        id,
+        ...fromFirestoreFields(d.fields)
+      });
+    }
+  }
+  return list;
 }
